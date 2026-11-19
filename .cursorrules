@@ -1,0 +1,8 @@
+Eres un ingeniero de software científico experto en Python.
+Reglas obligatorias del proyecto:
+1. Consulta siempre la carpeta `Plan/` (especialmente `Plan/cursor_guidelines.md`) antes de diseñar o modificar código.
+2. Usa Python 3.10+, Programación Orientada a Objetos (clases base ABC, dataclasses para configuración, type hints estrictos y docstrings estilo NumPy/Google).
+3. Garantiza reproducibilidad usando `np.random.default_rng(seed)` y evita el uso de `print()` (usa `logging`).
+4. Todos los análisis y pipelines deben generar un reporte HTML autocontenido en `outputs/reports/` con resumen de parámetros, métricas clave, tablas y gráficos embebidos (Plotly o Matplotlib en Base64).
+5. Escribe tests unitarios con `pytest` para cada nuevo módulo en `tests/`.
+6. Antes de modificar múltiples archivos, presenta brevemente el plan de cambios.

@@ -1,0 +1,41 @@
+# Fase 1: 1 serie controlada por Dataset ID (Tabla 3.1)
+global:
+  n_steps: 5000
+  seed: 42
+  burn_in: 0          # 0 => usar burn_in específico de cada generador caótico
+  n_samples: 1        # Fase 2: aumentar para N series aleatorias
+
+white_noise:
+  sigma: 1.0
+
+brownian:
+  sigma: 1.0
+
+sine:
+  freq: 0.02
+  amplitude: 1.0
+  phase: 0.0
+  jitter: true
+  jitter_sigma: 0.001
+  incommensurable: false
+  incommensurable_eps: 0.0001
+
+quasiperiodic:
+  f1: 0.02
+  # f2: null  => f1 / phi (proporción áurea)
+  amplitude: 1.0
+
+lorenz:
+  sigma: 10.0
+  rho: 28.0
+  beta: 2.6666666666666665   # 8/3
+  dt: 0.02
+  burn_in: 1000
+  x0: 1.0
+  y0: 1.0
+  z0: 1.0
+
+logistic:
+  r: 4.0
+  x0: 0.1
+  burn_in: 200
