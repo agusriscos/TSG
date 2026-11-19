@@ -1,0 +1,42 @@
+# Fase 1: 6 series × 8 métodos TS2G (Tabla 3.2)
+methods:
+  - NVG
+  - HVG
+  - RN
+  - kNN
+  - STN
+  - OPN
+  - Correlation
+  - Segment
+
+NVG: {}
+HVG: {}
+
+RN:
+  m: 3
+  tau: 1
+  w: 5
+  eps_percentile: 5.0
+
+kNN:
+  m: 3
+  tau: 1
+  w: 5
+  k: 5
+
+STN:
+  M: 10
+
+OPN:
+  m: 4
+  tau: 1
+
+Correlation:
+  L: 20
+  theta_corr: 0.75
+  use_bonferroni: false
+  alpha: 0.05
+
+Segment:
+  L: 20
+  eps_percentile: 20.0

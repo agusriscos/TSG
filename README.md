@@ -22,6 +22,17 @@ Salidas:
 - `outputs/data/synthetic_phase1/*.csv` + `metadata.json`
 - `outputs/reports/synthetic_suite/<timestamp>_summary.html` y `latest.html`
 
+## Mapeo TS2G (Tabla 3.2)
+
+```bash
+python scripts/build_ts2g_graphs.py
+```
+
+Salidas:
+
+- `outputs/graphs/synthetic_phase1/<dataset>/<method>.graphml` + `metadata.json`
+- `outputs/reports/ts2g_mapping/latest.html`
+
 ## Tests
 
 ```bash
@@ -32,9 +43,10 @@ pytest
 
 ```text
 src/tsg/generators/   # ABC, configs, estocástico / periódico / caótico, registry
-src/tsg/reporting/    # HTMLReportBuilder (Plotly + Jinja2)
+src/tsg/graphs/       # 8 transformadores TS2G (Tabla 3.2)
+src/tsg/reporting/    # HTMLReportBuilder / TS2GReportBuilder
 src/tsg/utils/        # logging e I/O
 configs/              # YAML Fase 1
-scripts/              # CLI de generación
+scripts/              # CLI de generación y mapeo
 tests/
 ```
