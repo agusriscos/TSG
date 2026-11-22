@@ -13,3 +13,21 @@ outputs/*
 !outputs/.gitkeep
 *.npz
 .DS_Store
+
+# Secrets / credentials (defense in depth before public repo)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+credentials.json
+secrets.*
+
+# Local tooling / IDE
+.cursor/
+.idea/
+.vscode/
+
+# Logs
+*.log

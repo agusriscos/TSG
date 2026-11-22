@@ -100,9 +100,14 @@ class Quasiperiodic(SeriesGenerator):
     ) -> GeneratedSeries:
         del burn_in
         p = self.params
+        rng = np.random.default_rng(seed)
+        # Seed-controlled phase offsets → distinct realizations of the same torus.
+        phase1 = float(rng.uniform(0.0, 2.0 * np.pi))
+        phase2 = float(rng.uniform(0.0, 2.0 * np.pi))
         t = np.arange(n_steps, dtype=float)
         f2 = self._f2()
         values = p.amplitude * (
-            np.sin(2.0 * np.pi * p.f1 * t) + np.sin(2.0 * np.pi * f2 * t)
+            np.sin(2.0 * np.pi * p.f1 * t + phase1)
+            + np.sin(2.0 * np.pi * f2 * t + phase2)
         )
         return self._finalize(values, seed=seed, burn_in=0)

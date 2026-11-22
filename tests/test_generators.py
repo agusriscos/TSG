@@ -117,3 +117,18 @@ def test_brownian_is_cumulative() -> None:
     series = BrownianMotion().generate(100, seed=5)
     # Random walk variance grows; |last| typically >> typical single step
     assert series.values.std() > 1.0
+
+
+def test_seed_variability_quasi_lorenz_logistic() -> None:
+    """Ensemble realizations must differ for quasiperiodic / lorenz / logistic."""
+    q1 = Quasiperiodic().generate(300, seed=1).values
+    q2 = Quasiperiodic().generate(300, seed=2).values
+    assert not np.allclose(q1, q2)
+
+    lo1 = LorenzX(params=LorenzParams(burn_in=50)).generate(200, seed=1).values
+    lo2 = LorenzX(params=LorenzParams(burn_in=50)).generate(200, seed=2).values
+    assert not np.allclose(lo1, lo2)
+
+    lg1 = LogisticMap(params=LogisticParams(burn_in=20)).generate(200, seed=1).values
+    lg2 = LogisticMap(params=LogisticParams(burn_in=20)).generate(200, seed=2).values
+    assert not np.allclose(lg1, lg2)

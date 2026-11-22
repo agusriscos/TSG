@@ -1,6 +1,7 @@
-# TSG — Generador de series sintéticas multirrégimen
+# TSG — Series sintéticas, TS2G y auditoría de la matriz D
 
-Implementación Fase 1 de la Tabla 3.1: **1 serie controlada** por cada `Dataset ID`
+Alcance acotado a la **Fase 1**: generar series controladas → mapear a grafos (TS2G) →
+extraer la matriz de descriptores \(D\) → auditar su discriminabilidad entre los 6 regímenes
 (`white_noise`, `brownian`, `sine`, `quasiperiodic`, `lorenz`, `logistic`).
 
 ## Instalación
@@ -11,7 +12,7 @@ uv pip install -e ".[dev]"
 source .venv/bin/activate
 ```
 
-## Generar la suite (Fase 1)
+## Generar la suite (Tabla 3.1)
 
 ```bash
 python scripts/generate_synthetic_suite.py
@@ -33,6 +34,27 @@ Salidas:
 - `outputs/graphs/synthetic_phase1/<dataset>/<method>.graphml` + `metadata.json`
 - `outputs/reports/ts2g_mapping/latest.html`
 
+## Descriptores — matriz D (Tabla 3.3)
+
+```bash
+python scripts/extract_descriptors.py
+```
+
+Salidas:
+
+- `outputs/descriptors/synthetic_phase1/*_matrix.csv` (6 matrices 16×8)
+- `outputs/descriptors/synthetic_phase1/all_descriptors_long.csv`
+- `outputs/reports/descriptors/latest.html`
+
+## Auditoría de discriminabilidad
+
+```bash
+python scripts/run_phase1_audit.py          # R=30, N=5000 (costoso)
+python scripts/run_phase1_audit.py --quick  # smoke test rápido
+```
+
+Salidas en `outputs/reports/phase1_audit/`: veredicto Go/No-Go, figuras, `metrics_summary.json`, HTML/MD.
+
 ## Tests
 
 ```bash
@@ -42,11 +64,14 @@ pytest
 ## Estructura
 
 ```text
-src/tsg/generators/   # ABC, configs, estocástico / periódico / caótico, registry
-src/tsg/graphs/       # 8 transformadores TS2G (Tabla 3.2)
-src/tsg/reporting/    # HTMLReportBuilder / TS2GReportBuilder
-src/tsg/utils/        # logging e I/O
-configs/              # YAML Fase 1
-scripts/              # CLI de generación y mapeo
+src/tsg/generators/    # Series sintéticas multirrégimen
+src/tsg/graphs/        # Transformadores TS2G (Tabla 3.2)
+src/tsg/descriptors/   # Descriptores topológicos/espectrales → matriz D
+src/tsg/audit/         # Auditoría de discriminabilidad de D
+src/tsg/reporting/     # Reportes HTML
+src/tsg/utils/         # Logging e I/O
+configs/               # YAML de la Fase 1
+scripts/               # CLI de generación, TS2G, descriptores y auditoría
+plan/                  # Especificaciones de alcance
 tests/
 ```

@@ -127,7 +127,10 @@ class BaseGraphTransformer(ABC):
         t0 = time.perf_counter()
         graph = self._build(values)
         elapsed = time.perf_counter() - t0
-        if nx.number_of_selfloops(graph) > 0:
+        # Keep self-loops on directed weighted transition networks (STN/OPN)
+        # so directional descriptors (I_dir, self_loop_ratio) remain valid.
+        # Undirected binary graphs should not carry self-loops.
+        if not (self.directed and self.weighted) and nx.number_of_selfloops(graph) > 0:
             graph.remove_edges_from(nx.selfloop_edges(graph))
         return GraphResult(
             dataset_id=dataset_id,

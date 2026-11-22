@@ -68,11 +68,19 @@ class LorenzX(SeriesGenerator):
         seed: int = 0,
         burn_in: int | None = None,
     ) -> GeneratedSeries:
-        del seed
         p = self.params
         transient = p.burn_in if burn_in is None else burn_in
         total = transient + n_steps
-        state = np.array([p.x0, p.y0, p.z0], dtype=float)
+        rng = np.random.default_rng(seed)
+        # Perturb ICs with seed so ensemble realizations explore the attractor.
+        state = np.array(
+            [
+                p.x0 + float(rng.normal(0.0, 0.5)),
+                p.y0 + float(rng.normal(0.0, 0.5)),
+                p.z0 + float(rng.normal(0.0, 0.5)),
+            ],
+            dtype=float,
+        )
         xs = np.empty(total, dtype=float)
         dt = p.dt
 
@@ -85,7 +93,7 @@ class LorenzX(SeriesGenerator):
             state = state + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
         values = xs[transient : transient + n_steps]
-        return self._finalize(values, seed=0, burn_in=transient)
+        return self._finalize(values, seed=seed, burn_in=transient)
 
 
 def validate_logistic_x0(x0: float) -> float:
@@ -130,14 +138,17 @@ class LogisticMap(SeriesGenerator):
         seed: int = 0,
         burn_in: int | None = None,
     ) -> GeneratedSeries:
-        del seed
         p = self.params
         transient = p.burn_in if burn_in is None else burn_in
-        x = validate_logistic_x0(p.x0)
+        rng = np.random.default_rng(seed)
+        # Sample a non-degenerate x0 in (0,1); fall back to params.x0 if seed unused.
+        lo, hi = p.x0_range
+        x0 = float(rng.uniform(lo, hi))
+        x = validate_logistic_x0(x0)
         for _ in range(transient):
             x = p.r * x * (1.0 - x)
         out = np.empty(n_steps, dtype=float)
         for i in range(n_steps):
             out[i] = x
             x = p.r * x * (1.0 - x)
-        return self._finalize(out, seed=0, burn_in=transient)
+        return self._finalize(out, seed=seed, burn_in=transient)

@@ -1,0 +1,7 @@
+# Fase 1: extracción de los 16 descriptores (Tabla 3.3) sobre 48 grafos
+descriptors:
+  laplacian: combinatorial   # alternativa: normalized
+  entropy_base: e            # alternativa: "2"
+  large_graph_threshold: 250
+  eigsh_maxiter: 5000
+  eigsh_tol: 1.0e-8

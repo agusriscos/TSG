@@ -1,0 +1,33 @@
+# Fase 1 — Auditoría de discriminabilidad de la matriz D
+audit:
+  n_steps: 5000
+  n_realizations: 30
+  seed: 42
+  brownian_mode: increments   # levels | increments | stl_residuals
+  n_folds: 5
+  variance_eps: 1.0e-12
+  figure_dpi: 300
+  regimes:
+    - white_noise
+    - brownian
+    - sine
+    - quasiperiodic
+    - lorenz
+    - logistic
+  methods:
+    - NVG
+    - HVG
+    - RN
+    - kNN
+    - STN
+    - OPN
+    - Correlation
+    - Segment
+  families:
+    visibility: [NVG, HVG]
+    transition: [STN, OPN]
+    proximity: [RN, kNN]
+  critical_pairs:
+    - [logistic, white_noise]
+    - [lorenz, white_noise]
+    - [lorenz, quasiperiodic]
