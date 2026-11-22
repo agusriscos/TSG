@@ -20,6 +20,13 @@ class HVGParams:
 
 
 @dataclass(frozen=True)
+class DHVGParams:
+    """Directed Horizontal Visibility Graph (time arrow i → j for i < j)."""
+
+    pass
+
+
+@dataclass(frozen=True)
 class RNParams:
     m: int = 3
     tau: int = 1
@@ -76,6 +83,7 @@ class TS2GSuiteConfig:
     )
     nvg: NVGParams = field(default_factory=NVGParams)
     hvg: HVGParams = field(default_factory=HVGParams)
+    dhvg: DHVGParams = field(default_factory=DHVGParams)
     rn: RNParams = field(default_factory=RNParams)
     knn: KNNParams = field(default_factory=KNNParams)
     stn: STNParams = field(default_factory=STNParams)
@@ -90,6 +98,9 @@ class TS2GSuiteConfig:
             methods=tuple(methods) if methods is not None else cls().methods,
             nvg=NVGParams(**_pick(data.get("NVG", data.get("nvg", {})), NVGParams)),
             hvg=HVGParams(**_pick(data.get("HVG", data.get("hvg", {})), HVGParams)),
+            dhvg=DHVGParams(
+                **_pick(data.get("dHVG", data.get("dhvg", {})), DHVGParams)
+            ),
             rn=RNParams(**_pick(data.get("RN", data.get("rn", {})), RNParams)),
             knn=KNNParams(**_pick(data.get("kNN", data.get("knn", {})), KNNParams)),
             stn=STNParams(**_pick(data.get("STN", data.get("stn", {})), STNParams)),

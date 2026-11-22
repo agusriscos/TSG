@@ -24,18 +24,25 @@ quasiperiodic:
   f1: 0.02
   # f2: null  => f1 / phi (proporción áurea)
   amplitude: 1.0
+  f1_range: [0.018, 0.022]
+  amp2_ratio_range: [0.85, 1.15]
+  phi_jitter_frac: 0.05
 
 lorenz:
   sigma: 10.0
   rho: 28.0
-  beta: 2.6666666666666665   # 8/3
+  beta: 2.6666666666666665   # 8/3 (fijo; no se perturba)
   dt: 0.02
   burn_in: 1000
   x0: 1.0
   y0: 1.0
   z0: 1.0
+  sigma_range: [9.5, 10.5]
+  rho_range: [27.0, 29.0]
 
 logistic:
-  r: 4.0
+  r: 4.0   # fijo (evitar ventanas periódicas)
   x0: 0.1
   burn_in: 200
+  x0_range: [0.05, 0.95]
+  burn_in_range: [500, 1500]

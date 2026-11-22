@@ -1,10 +1,12 @@
-"""Generate R realizations × 6 regimes and extract descriptor matrices D_r."""
+"""Generate R realizations × the configured regimes and extract descriptor matrices D_r."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import pickle
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -14,47 +16,83 @@ from numpy.typing import NDArray
 from tsg.audit.config import AuditConfig
 from tsg.descriptors.config import DescriptorConfig
 from tsg.descriptors.pipeline import DescriptorPipeline, results_to_matrix
-from tsg.generators.chaotic import LogisticMap, LorenzX
-from tsg.generators.config import GeneratorSuiteConfig, GlobalGenerationParams
-from tsg.generators.periodic import Quasiperiodic, SineWave
-from tsg.generators.stochastic import BrownianMotion, WhiteNoise
+from tsg.generators.config import GeneratorSuiteConfig
+from tsg.generators.registry import (
+    CANONICAL_REGIMES,
+    REGIME_LABELS,
+    build_generator,
+)
 from tsg.graphs.config import TS2GSuiteConfig
 from tsg.graphs.registry import build_transformers
 
 logger = logging.getLogger(__name__)
 
-# Fixed order keeps seeds stable even when auditing a regime subset.
-CANONICAL_REGIMES: tuple[str, ...] = (
-    "white_noise",
-    "brownian",
-    "sine",
-    "quasiperiodic",
-    "lorenz",
-    "logistic",
+# Bump when generation / preprocessing semantics change (invalidates old caches).
+# fase2_v1: frontier regimes + profile/regime list inside the cache fingerprint.
+ENSEMBLE_CACHE_VERSION = "fase2_v1"
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_GENERATOR_SUITE_YAML = _REPO_ROOT / "configs" / "synthetic_suite_phase1.yaml"
+
+# Integrated paths. ``brownian_mode`` rewrites STN/OPN inputs for every member,
+# so fBm is treated the same way as classical Brownian motion.
+INTEGRATED_TRAJECTORY_IDS: frozenset[str] = frozenset(
+    {"brownian", "fbm_antipersistent", "fbm_persistent"}
 )
 
-REGIME_TO_GENERATOR = {
-    "white_noise": lambda cfg: WhiteNoise(params=cfg.white_noise),
-    "brownian": lambda cfg: BrownianMotion(params=cfg.brownian),
-    "sine": lambda cfg: SineWave(params=cfg.sine),
-    "quasiperiodic": lambda cfg: Quasiperiodic(params=cfg.quasiperiodic),
-    "lorenz": lambda cfg: LorenzX(params=cfg.lorenz),
-    "logistic": lambda cfg: LogisticMap(params=cfg.logistic),
-}
-
-REGIME_LABEL: dict[str, str] = {
-    "white_noise": "stochastic",
-    "brownian": "stochastic",
-    "sine": "periodic",
-    "quasiperiodic": "periodic",
-    "lorenz": "chaotic",
-    "logistic": "chaotic",
-}
+# Re-exported so existing imports of the audit ensemble keep working.
+REGIME_LABEL: dict[str, str] = REGIME_LABELS
 
 
 def realization_seed(base_seed: int, dataset_id: str, realization: int) -> int:
     """Deterministic seed using the canonical regime index."""
     return int(base_seed + 1000 * CANONICAL_REGIMES.index(dataset_id) + realization)
+
+
+def load_generator_suite_config(
+    path: Path | str | None = None,
+) -> GeneratorSuiteConfig:
+    """Load the Phase-1 synthetic suite YAML (or defaults if missing)."""
+    yaml_path = Path(path) if path is not None else DEFAULT_GENERATOR_SUITE_YAML
+    if yaml_path.exists():
+        logger.info("Loading generator suite config from %s", yaml_path)
+        return GeneratorSuiteConfig.from_yaml(yaml_path)
+    logger.warning(
+        "Generator suite YAML not found at %s; using dataclass defaults",
+        yaml_path,
+    )
+    return GeneratorSuiteConfig()
+
+
+def ensemble_cache_fingerprint(
+    audit_config: AuditConfig,
+    generator_config: GeneratorSuiteConfig,
+) -> str:
+    """Stable subdirectory name so old caches never mix with new semantics."""
+    payload = {
+        "cache_version": ENSEMBLE_CACHE_VERSION,
+        "n_steps": audit_config.n_steps,
+        "n_realizations": audit_config.n_realizations,
+        "profile": audit_config.profile,
+        "regimes": list(audit_config.regimes),
+        "brownian_mode": audit_config.brownian_mode,
+        "methods": list(audit_config.methods),
+        "seed": audit_config.seed,
+        "generator": asdict(generator_config),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:12]
+    return f"{ENSEMBLE_CACHE_VERSION}_{digest}"
+
+
+def versioned_cache_dir(
+    cache_dir: Path,
+    audit_config: AuditConfig,
+    generator_config: GeneratorSuiteConfig,
+) -> Path:
+    """Return ``cache_dir / <fingerprint>`` for this audit+generator config."""
+    return cache_dir / ensemble_cache_fingerprint(audit_config, generator_config)
 
 
 def _cache_path(cache_dir: Path, dataset_id: str, realization: int, seed: int) -> Path:
@@ -91,9 +129,13 @@ def _prepare_series_for_method(
     method: str,
     config: AuditConfig,
 ) -> NDArray[np.floating]:
-    """Optionally transform Brownian series before transition networks."""
+    """Optionally transform integrated trajectories before transition networks.
+
+    ``brownian_mode`` applies to every cumulative path (classical Brownian
+    motion and both fBm variants). ``levels`` leaves the path unchanged.
+    """
     x = np.asarray(values, dtype=float).ravel()
-    if dataset_id != "brownian":
+    if dataset_id not in INTEGRATED_TRAJECTORY_IDS:
         return x
     if method not in {"STN", "OPN"}:
         return x
@@ -122,27 +164,19 @@ def generate_one_matrix(
     descriptor_config: DescriptorConfig | None = None,
 ) -> dict[str, Any]:
     """Generate one series, map with all TS2G methods and return D matrix."""
-    gen_cfg = generator_config or GeneratorSuiteConfig(
-        global_params=GlobalGenerationParams(
+    gen_cfg = generator_config or load_generator_suite_config()
+    # Align series length with the audit run; keep chaotic burn-in defaults from YAML.
+    gen_cfg = replace(
+        gen_cfg,
+        global_params=replace(
+            gen_cfg.global_params,
             n_steps=audit_config.n_steps,
             seed=seed,
             n_samples=1,
-        )
+        ),
     )
-    # Keep chaotic burn-ins but align length.
-    if dataset_id == "lorenz":
-        gen_cfg = replace(
-            gen_cfg,
-            lorenz=replace(gen_cfg.lorenz, burn_in=min(gen_cfg.lorenz.burn_in, 1000)),
-        )
-    if dataset_id == "logistic":
-        gen_cfg = replace(
-            gen_cfg,
-            logistic=replace(gen_cfg.logistic, burn_in=min(gen_cfg.logistic.burn_in, 200)),
-        )
 
-    factory = REGIME_TO_GENERATOR[dataset_id]
-    generator = factory(gen_cfg)
+    generator = build_generator(dataset_id, gen_cfg)
     series = generator.generate(audit_config.n_steps, seed=seed)
     values = series.values
 
@@ -178,64 +212,131 @@ def generate_one_matrix(
         "seed": seed,
         "matrix": matrix,
         "series_length": int(values.size),
+        "series_params": series.params,
+        "cache_version": ENSEMBLE_CACHE_VERSION,
     }
+
+
+def _ensemble_job(
+    dataset_id: str,
+    realization: int,
+    seed: int,
+    *,
+    audit_config: AuditConfig,
+    generator_config: GeneratorSuiteConfig,
+    descriptor_config: DescriptorConfig | None,
+    cache: Path | None,
+    force: bool,
+) -> dict[str, Any]:
+    """One (regime, realization) unit — safe for process-pool execution."""
+    if cache is not None and not force:
+        cached = load_record(cache, dataset_id, realization, seed)
+        if cached is not None:
+            cached.setdefault("realization", realization)
+            return cached
+    rec = generate_one_matrix(
+        dataset_id,
+        seed=seed,
+        audit_config=audit_config,
+        generator_config=generator_config,
+        descriptor_config=descriptor_config,
+    )
+    rec["realization"] = realization
+    if cache is not None:
+        save_record(rec, cache)
+    return rec
 
 
 def build_ensemble_records(
     config: AuditConfig,
     *,
     descriptor_config: DescriptorConfig | None = None,
+    generator_config: GeneratorSuiteConfig | None = None,
+    generator_suite_yaml: Path | str | None = None,
     cache_dir: Path | str | None = None,
     force_regimes: tuple[str, ...] | None = None,
+    n_workers: int = 1,
 ) -> list[dict[str, Any]]:
     """Build descriptor-matrix records with controlled seeds.
 
     Parameters
     ----------
     cache_dir
-        If set, load existing records from disk and only regenerate missing
-        ones (or those listed in ``force_regimes``).
+        If set, load existing records from a **versioned** subdirectory derived
+        from the audit + generator fingerprint, so stale caches never mix.
     force_regimes
         Regimes that must be recomputed even if a cache entry exists.
+    n_workers
+        Parallel workers for graph/descriptor extraction. Each task derives a
+        deterministic seed via :func:`realization_seed`, so ``workers=1`` and
+        ``workers>1`` produce identical matrices.
     """
-    cache = Path(cache_dir) if cache_dir is not None else None
+    gen_cfg = generator_config or load_generator_suite_config(generator_suite_yaml)
+    cache_root = Path(cache_dir) if cache_dir is not None else None
+    cache = (
+        versioned_cache_dir(cache_root, config, gen_cfg)
+        if cache_root is not None
+        else None
+    )
+    if cache is not None:
+        cache.mkdir(parents=True, exist_ok=True)
+        logger.info("Ensemble cache directory: %s", cache)
+
     force = set(force_regimes or ())
-    records: list[dict[str, Any]] = []
-    total = len(config.regimes) * config.n_realizations
-    done = 0
+    jobs: list[tuple[str, int, int, bool]] = []
     for dataset_id in config.regimes:
         for r in range(config.n_realizations):
             seed = realization_seed(config.seed, dataset_id, r)
-            done += 1
-            rec: dict[str, Any] | None = None
-            if cache is not None and dataset_id not in force:
-                rec = load_record(cache, dataset_id, r, seed)
-                if rec is not None:
-                    logger.info(
-                        "Ensemble %d/%d dataset=%s realization=%d seed=%d [cache]",
-                        done,
-                        total,
-                        dataset_id,
-                        r,
-                        seed,
-                    )
-            if rec is None:
-                logger.info(
-                    "Ensemble %d/%d dataset=%s realization=%d seed=%d [compute]",
-                    done,
-                    total,
+            jobs.append((dataset_id, r, seed, dataset_id in force))
+
+    total = len(jobs)
+    workers = max(1, int(n_workers))
+    logger.info(
+        "Building ensemble jobs=%d workers=%d regimes=%d R=%d",
+        total,
+        workers,
+        len(config.regimes),
+        config.n_realizations,
+    )
+
+    if workers == 1:
+        records: list[dict[str, Any]] = []
+        for done, (dataset_id, r, seed, must_force) in enumerate(jobs, start=1):
+            logger.info(
+                "Ensemble %d/%d dataset=%s realization=%d seed=%d",
+                done,
+                total,
+                dataset_id,
+                r,
+                seed,
+            )
+            records.append(
+                _ensemble_job(
                     dataset_id,
                     r,
                     seed,
-                )
-                rec = generate_one_matrix(
-                    dataset_id,
-                    seed=seed,
                     audit_config=config,
+                    generator_config=gen_cfg,
                     descriptor_config=descriptor_config,
+                    cache=cache,
+                    force=must_force,
                 )
-                rec["realization"] = r
-                if cache is not None:
-                    save_record(rec, cache)
-            records.append(rec)
-    return records
+            )
+        return records
+
+    from joblib import Parallel, delayed
+
+    computed = Parallel(n_jobs=workers, prefer="processes")(
+        delayed(_ensemble_job)(
+            dataset_id,
+            r,
+            seed,
+            audit_config=config,
+            generator_config=gen_cfg,
+            descriptor_config=descriptor_config,
+            cache=cache,
+            force=must_force,
+        )
+        for dataset_id, r, seed, must_force in jobs
+    )
+    return list(computed)

@@ -89,6 +89,9 @@ class Quasiperiodic(SeriesGenerator):
             "f2": self._f2(),
             "amplitude": self.params.amplitude,
             "phi": float(GOLDEN_RATIO),
+            "f1_range": list(self.params.f1_range),
+            "amp2_ratio_range": list(self.params.amp2_ratio_range),
+            "phi_jitter_frac": self.params.phi_jitter_frac,
         }
 
     def generate(
@@ -101,13 +104,34 @@ class Quasiperiodic(SeriesGenerator):
         del burn_in
         p = self.params
         rng = np.random.default_rng(seed)
-        # Seed-controlled phase offsets → distinct realizations of the same torus.
         phase1 = float(rng.uniform(0.0, 2.0 * np.pi))
         phase2 = float(rng.uniform(0.0, 2.0 * np.pi))
+        f1 = float(rng.uniform(*p.f1_range))
+        phi_jitter = float(rng.uniform(-p.phi_jitter_frac, p.phi_jitter_frac))
+        if p.f2 is None:
+            phi_eff = GOLDEN_RATIO * (1.0 + phi_jitter)
+            f2 = f1 / phi_eff
+        else:
+            phi_eff = float(GOLDEN_RATIO)
+            f2 = float(p.f2) * (1.0 + phi_jitter)
+        amp2_ratio = float(rng.uniform(*p.amp2_ratio_range))
+        amp1 = float(p.amplitude)
+        amp2 = amp1 * amp2_ratio
         t = np.arange(n_steps, dtype=float)
-        f2 = self._f2()
-        values = p.amplitude * (
-            np.sin(2.0 * np.pi * p.f1 * t + phase1)
-            + np.sin(2.0 * np.pi * f2 * t + phase2)
+        values = amp1 * np.sin(2.0 * np.pi * f1 * t + phase1) + amp2 * np.sin(
+            2.0 * np.pi * f2 * t + phase2
         )
-        return self._finalize(values, seed=seed, burn_in=0)
+        used = {
+            "f1": f1,
+            "f2": f2,
+            "amplitude": amp1,
+            "amp2": amp2,
+            "amp2_ratio": amp2_ratio,
+            "phi": phi_eff,
+            "phase1": phase1,
+            "phase2": phase2,
+            "f1_range": list(p.f1_range),
+            "amp2_ratio_range": list(p.amp2_ratio_range),
+            "phi_jitter_frac": p.phi_jitter_frac,
+        }
+        return self._finalize(values, seed=seed, burn_in=0, params=used)

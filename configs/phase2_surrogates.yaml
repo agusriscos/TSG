@@ -1,0 +1,52 @@
+# Bloque 2 — auditoría de subrogados (Shuffled / FT / IAAFT) + dHVG.
+# Los configs de Fase 1 y phase2_hard_frontiers no se modifican; dHVG es opt-in aquí.
+audit:
+  n_steps: 1000
+  n_realizations: 30
+  seed: 42
+  profile: paper
+  brownian_mode: levels
+  n_folds: 5
+  variance_eps: 1.0e-12
+  figure_dpi: 300
+  profiles:
+    dev:
+      n_realizations: 10
+      n_steps: 1000
+    paper:
+      n_realizations: 30
+      n_steps: 1000
+  regimes:
+    - white_noise
+    - arma_correlated
+    - quasiperiodic
+    - lorenz
+    - rossler
+    - henon
+    - logistic
+  methods:
+    - NVG
+    - HVG
+    - dHVG
+    - RN
+    - kNN
+    - STN
+    - OPN
+    - Correlation
+    - Segment
+  families:
+    visibility: [NVG, HVG, dHVG]
+    transition: [STN, OPN]
+    proximity: [RN, kNN]
+    similarity: [Correlation, Segment]
+  critical_pairs:
+    - [lorenz, white_noise]
+    - [rossler, arma_correlated]
+    - [henon, logistic]
+
+surrogates:
+  kinds: [original, shuffled, ft, iaaft]
+  # Spectral-error stopping (not ||y||); needs enough iterations for peaked AR spectra.
+  iaaft_max_iter: 250
+  iaaft_min_iter: 10
+  iaaft_tol: 1.0e-6

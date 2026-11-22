@@ -10,16 +10,31 @@ from numpy.typing import NDArray
 
 from tsg.graphs.base import BaseGraphTransformer, GraphResult
 from tsg.graphs.config import TS2GSuiteConfig
-from tsg.graphs.geometry import HVGTransformer, NVGTransformer
+from tsg.graphs.geometry import DHVGTransformer, HVGTransformer, NVGTransformer
 from tsg.graphs.phase_space import KNNTransformer, RecurrenceNetworkTransformer
 from tsg.graphs.similarity import CorrelationNetworkTransformer, SegmentNetworkTransformer
 from tsg.graphs.transition import OPNTransformer, STNTransformer
 
 logger = logging.getLogger(__name__)
 
+# Default Phase-1 / Phase-2 catalog (8 methods). ``dHVG`` is registered in the
+# factory but opt-in via config so existing YAMLs stay 100% backward-compatible.
 METHOD_IDS: tuple[str, ...] = (
     "NVG",
     "HVG",
+    "RN",
+    "kNN",
+    "STN",
+    "OPN",
+    "Correlation",
+    "Segment",
+)
+
+# Extended catalog ids (includes directed visibility).
+ALL_METHOD_IDS: tuple[str, ...] = (
+    "NVG",
+    "HVG",
+    "dHVG",
     "RN",
     "kNN",
     "STN",
@@ -37,6 +52,7 @@ def build_transformers(
     catalog: dict[str, BaseGraphTransformer] = {
         "NVG": NVGTransformer(params=cfg.nvg),
         "HVG": HVGTransformer(params=cfg.hvg),
+        "dHVG": DHVGTransformer(params=cfg.dhvg),
         "RN": RecurrenceNetworkTransformer(params=cfg.rn),
         "kNN": KNNTransformer(params=cfg.knn),
         "STN": STNTransformer(params=cfg.stn),

@@ -35,13 +35,17 @@ class GeometryResult:
             "centroid_euclidean": self.centroid_euclidean.to_dict(),
             "centroid_cosine": self.centroid_cosine.to_dict(),
             "critical_pair_distances": self.critical_pair_distances,
-            "top_loadings_pc1_pc2": self.loadings.assign(
-                score=np.sqrt(self.loadings["PC1"] ** 2 + self.loadings["PC2"] ** 2)
-            )
-            .sort_values("score", ascending=False)
-            .head(15)
-            .to_dict(orient="records"),
+            "top_loadings_pc1_pc2": _top_loadings_records(self.loadings),
         }
+
+
+def _top_loadings_records(loadings: pd.DataFrame) -> list[dict[str, Any]]:
+    """Serialize top PC1/PC2 loadings with an explicit ``feature`` key."""
+    frame = loadings.rename_axis("feature").reset_index()
+    pc1 = frame["PC1"] if "PC1" in frame.columns else 0.0
+    pc2 = frame["PC2"] if "PC2" in frame.columns else 0.0
+    frame = frame.assign(score=np.sqrt(np.asarray(pc1) ** 2 + np.asarray(pc2) ** 2))
+    return frame.sort_values("score", ascending=False).head(15).to_dict(orient="records")
 
 
 def analyze_geometry(

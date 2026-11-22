@@ -3,7 +3,7 @@ audit:
   n_steps: 5000
   n_realizations: 30
   seed: 42
-  brownian_mode: increments   # levels | increments | stl_residuals
+  brownian_mode: levels   # levels | increments | stl_residuals (STN/OPN sobre trayectoria integrada)
   n_folds: 5
   variance_eps: 1.0e-12
   figure_dpi: 300
@@ -27,6 +27,7 @@ audit:
     visibility: [NVG, HVG]
     transition: [STN, OPN]
     proximity: [RN, kNN]
+    similarity: [Correlation, Segment]
   critical_pairs:
     - [logistic, white_noise]
     - [lorenz, white_noise]

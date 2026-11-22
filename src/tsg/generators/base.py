@@ -9,7 +9,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
-Regime = Literal["stochastic", "periodic", "chaotic"]
+Regime = Literal["stochastic", "periodic", "chaotic", "nonstationary"]
 
 
 @dataclass(frozen=True)
@@ -99,6 +99,7 @@ class SeriesGenerator(ABC):
         *,
         seed: int,
         burn_in: int,
+        params: dict[str, Any] | None = None,
     ) -> GeneratedSeries:
         return GeneratedSeries(
             dataset_id=self.dataset_id,
@@ -106,7 +107,7 @@ class SeriesGenerator(ABC):
             values=values,
             length=int(np.asarray(values).size),
             seed=seed,
-            params=self.params_dict(),
+            params=params if params is not None else self.params_dict(),
             burn_in=burn_in,
             variable=self.variable,
         )

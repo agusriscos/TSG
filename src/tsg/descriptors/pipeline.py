@@ -58,12 +58,22 @@ class DescriptorPipeline:
         regime: str = "",
         family: str = "",
     ) -> DescriptorResult:
-        """Extract all 16 descriptors for a single graph."""
+        """Extract all 16 Table-3.3 descriptors for a single graph.
+
+        Extractors may also emit auxiliary metrics (e.g. ``kl_inout``); those
+        land in ``DescriptorResult.extras`` without expanding the 16-vector.
+        """
         t0 = time.perf_counter()
         prepared = prepare_graph(graph)
         values: dict[str, float] = {}
+        aux: dict[str, float] = {}
         for extractor in self.extractors:
-            values.update(extractor.extract(prepared, self.config))
+            extracted = extractor.extract(prepared, self.config)
+            for key, val in extracted.items():
+                if key in DESCRIPTOR_IDS:
+                    values[key] = float(val)
+                else:
+                    aux[key] = float(val)
         missing = [k for k in DESCRIPTOR_IDS if k not in values]
         if missing:
             raise RuntimeError(f"Missing descriptors: {missing}")
@@ -80,6 +90,7 @@ class DescriptorPipeline:
                 "n_edges_undirected": prepared.n_edges_undirected,
                 "laplacian": self.config.laplacian,
                 "entropy_base": self.config.entropy_base,
+                **aux,
             },
         )
 

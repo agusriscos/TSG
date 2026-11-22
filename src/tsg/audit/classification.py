@@ -34,6 +34,11 @@ class ViewMetrics:
     f1_by_class: dict[str, float]
     confusion: pd.DataFrame
     confusion_normalized: pd.DataFrame
+    y_true: list[str] = field(default_factory=list)
+    y_pred: list[str] = field(default_factory=list)
+    y_proba: np.ndarray | None = None
+    fold_id: np.ndarray | None = None
+    class_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,8 +49,23 @@ class ViewMetrics:
             "macro_f1_mean": self.macro_f1_mean,
             "macro_f1_std": self.macro_f1_std,
             "f1_by_class": self.f1_by_class,
-            "confusion": self.confusion.to_dict(),
-            "confusion_normalized": self.confusion_normalized.to_dict(),
+            # orient="index" → outer key is true label (row); each group sums to 1.0
+            "confusion": self.confusion.to_dict(orient="index"),
+            "confusion_normalized": self.confusion_normalized.to_dict(orient="index"),
+        }
+
+    def oof_bundle(self) -> dict[str, Any]:
+        """Out-of-fold arrays for NPZ persistence."""
+        return {
+            "y_true": list(self.y_true),
+            "y_pred": list(self.y_pred),
+            "y_proba": self.y_proba,
+            "fold_id": (
+                np.asarray(self.fold_id, dtype=int)
+                if self.fold_id is not None
+                else np.zeros(len(self.y_true), dtype=int)
+            ),
+            "class_names": list(self.class_names),
         }
 
 
@@ -83,8 +103,12 @@ class ClassificationResult:
             "critical_pair_confusion_rate": self.critical_pair_confusion_rate,
         }
 
+    def oof_bundles(self) -> dict[str, dict[str, Any]]:
+        """Map ``view__model`` → OOF arrays for disk persistence."""
+        return {f"{v.view}__{v.model}": v.oof_bundle() for v in self.views}
 
-def _make_models(seed: int) -> dict[str, Pipeline]:
+
+def _make_models(seed: int, *, rf_n_jobs: int = -1) -> dict[str, Pipeline]:
     return {
         "logistic": Pipeline(
             [
@@ -107,7 +131,7 @@ def _make_models(seed: int) -> dict[str, Pipeline]:
                     RandomForestClassifier(
                         n_estimators=300,
                         random_state=seed,
-                        n_jobs=-1,
+                        n_jobs=rf_n_jobs,
                         class_weight="balanced_subsample",
                     ),
                 ),
@@ -126,8 +150,9 @@ def _evaluate_view(
     config: AuditConfig,
 ) -> ViewMetrics:
     labels = list(config.regimes)
+    n_splits = min(config.n_folds, int(y.value_counts().min()))
     skf = StratifiedKFold(
-        n_splits=min(config.n_folds, int(y.value_counts().min())),
+        n_splits=n_splits,
         shuffle=True,
         random_state=config.seed,
     )
@@ -137,14 +162,44 @@ def _evaluate_view(
     y_pred_all: list[str] = []
     xa = x.to_numpy(dtype=float)
     ya = y.to_numpy()
+    # OOF stored in fold-visit order; fold_id stays aligned with y_true/y_pred/y_proba.
+    y_true_ordered: list[str] = []
+    y_pred_ordered: list[str] = []
+    fold_ordered: list[int] = []
+    proba_rows: list[np.ndarray] = []
 
-    for train_idx, test_idx in skf.split(xa, ya):
-        model.fit(xa[train_idx], ya[train_idx])
-        pred = model.predict(xa[test_idx])
+    label_to_col = {lab: i for i, lab in enumerate(labels)}
+    for fold_i, (train_idx, test_idx) in enumerate(skf.split(xa, ya)):
+        fitted = clone(model)
+        fitted.fit(xa[train_idx], ya[train_idx])
+        pred = fitted.predict(xa[test_idx])
         accs.append(float(accuracy_score(ya[test_idx], pred)))
-        f1s.append(float(f1_score(ya[test_idx], pred, average="macro", labels=labels, zero_division=0)))
+        f1s.append(
+            float(
+                f1_score(
+                    ya[test_idx],
+                    pred,
+                    average="macro",
+                    labels=labels,
+                    zero_division=0,
+                )
+            )
+        )
         y_true_all.extend(ya[test_idx].tolist())
         y_pred_all.extend(pred.tolist())
+        y_true_ordered.extend(str(v) for v in ya[test_idx].tolist())
+        y_pred_ordered.extend(str(v) for v in pred.tolist())
+        fold_ordered.extend([fold_i] * len(test_idx))
+        if hasattr(fitted, "predict_proba"):
+            proba = fitted.predict_proba(xa[test_idx])
+            # Align columns to ``labels`` order (sklearn uses sorted unique train labels).
+            class_order = list(fitted.classes_)
+            aligned = np.full((len(test_idx), len(labels)), np.nan, dtype=float)
+            for src_j, cls in enumerate(class_order):
+                dst_j = label_to_col.get(str(cls))
+                if dst_j is not None:
+                    aligned[:, dst_j] = proba[:, src_j]
+            proba_rows.append(aligned)
 
     cm = confusion_matrix(y_true_all, y_pred_all, labels=labels)
     cm_df = pd.DataFrame(cm, index=labels, columns=labels)
@@ -161,6 +216,9 @@ def _evaluate_view(
         zero_division=0,
     )
     f1_by = {lab: float(v) for lab, v in zip(labels, f1_per)}
+    y_proba_oof = (
+        np.vstack(proba_rows) if proba_rows else np.zeros((0, len(labels)), dtype=float)
+    )
 
     return ViewMetrics(
         view=view,
@@ -172,6 +230,11 @@ def _evaluate_view(
         f1_by_class=f1_by,
         confusion=cm_df,
         confusion_normalized=cm_norm_df,
+        y_true=y_true_ordered,
+        y_pred=y_pred_ordered,
+        y_proba=y_proba_oof,
+        fold_id=np.asarray(fold_ordered, dtype=int),
+        class_names=list(labels),
     )
 
 
@@ -255,6 +318,7 @@ def evaluate_classification(
         ("visibility", family_feature_mask(x.columns, "visibility")),
         ("transition", family_feature_mask(x.columns, "transition")),
         ("proximity", family_feature_mask(x.columns, "proximity")),
+        ("similarity", family_feature_mask(x.columns, "similarity")),
         ("full", np.ones(len(x.columns), dtype=bool)),
     ]
 

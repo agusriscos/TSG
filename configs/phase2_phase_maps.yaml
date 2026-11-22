@@ -1,0 +1,56 @@
+# Bloque 5 — mapas de fase N × SNR y modos de fallo topológicos vs espectrales.
+audit:
+  n_steps: 1000
+  n_realizations: 8
+  seed: 42
+  profile: dev
+  brownian_mode: levels
+  n_folds: 5
+  variance_eps: 1.0e-12
+  figure_dpi: 300
+  profiles:
+    dev:
+      n_realizations: 8
+      n_steps: 1000
+    paper:
+      n_realizations: 20
+      n_steps: 1000
+  regimes:
+    - white_noise
+    - arma_correlated
+    - quasiperiodic
+    - lorenz
+    - rossler
+    - logistic
+  methods:
+    - NVG
+    - HVG
+    - RN
+    - kNN
+    - STN
+    - OPN
+    - Correlation
+    - Segment
+  families:
+    visibility: [NVG, HVG]
+    transition: [STN, OPN]
+    proximity: [RN, kNN]
+    similarity: [Correlation, Segment]
+  critical_pairs:
+    - [arma_correlated, lorenz]
+    - [lorenz, rossler]
+
+phase_maps:
+  n_grid_dev: [200, 500, 1000]
+  snr_db_dev: [null, 20, 10, 5, 0]   # null = ∞ (clean)
+  n_grid_paper: [100, 250, 500, 1000]
+  snr_db_paper: [null, 20, 10, 5, 0, -5]
+  paper_regimes:
+    - white_noise
+    - brownian
+    - arma_correlated
+    - quasiperiodic
+    - lorenz
+    - rossler
+    - logistic
+    - regime_switching

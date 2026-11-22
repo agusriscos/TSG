@@ -7,7 +7,8 @@ import argparse
 import logging
 from pathlib import Path
 
-from tsg.audit.config import AuditConfig
+from tsg.audit.artifacts import default_workers, resolve_lang
+from tsg.audit.config import AuditConfig, apply_profile
 from tsg.audit.pipeline import AuditPipeline
 from tsg.utils.logging import setup_logging
 
@@ -22,6 +23,15 @@ def parse_args() -> argparse.Namespace:
         description="Audit whether descriptor matrix D separates the 6 synthetic regimes."
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--profile",
+        choices=("dev", "paper"),
+        default=None,
+        help=(
+            "Benchmark profile. dev: R=10, N=1000. paper: R=30, N=1500 (YAML may override). "
+            "A YAML profiles block overrides these defaults for the same name."
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -69,6 +79,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Restrict the report to --regimes only (legacy partial audit).",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Parallel graph/descriptor workers (default: max(1, cpu_count-1)).",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=("en", "es"),
+        default=None,
+        help="Figure language (default: en when --profile paper, else en).",
+    )
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Regenerate figures from saved NPZ/JSON/pickle without recomputing graphs.",
+    )
     return parser.parse_args()
 
 
@@ -76,15 +103,14 @@ def main() -> None:
     setup_logging()
     args = parse_args()
     config = AuditConfig.from_yaml(args.config)
+    if args.profile is not None:
+        config = apply_profile(config, args.profile)
 
     overrides: dict = {}
-    if args.n_realizations is not None:
-        overrides["n_realizations"] = args.n_realizations
-    if args.n_steps is not None:
-        overrides["n_steps"] = args.n_steps
     if args.quick:
         overrides.update(
             {
+                "profile": "quick",
                 "n_realizations": 3,
                 "n_steps": 400,
                 "methods": (
@@ -103,6 +129,11 @@ def main() -> None:
                 },
             }
         )
+    # Explicit size flags always win over --quick defaults.
+    if args.n_realizations is not None:
+        overrides["n_realizations"] = args.n_realizations
+    if args.n_steps is not None:
+        overrides["n_steps"] = args.n_steps
     if overrides:
         from dataclasses import replace
 
@@ -135,16 +166,29 @@ def main() -> None:
             )
             config = replace(config, regimes=wanted, critical_pairs=crit)
 
+    lang = resolve_lang(config.profile, args.lang)
+    workers = default_workers() if args.workers is None else max(1, int(args.workers))
+    pipeline = AuditPipeline(config, lang=lang, n_workers=workers)
+
+    if args.plot_only:
+        logger.info("Plot-only mode output=%s lang=%s", args.output_dir, lang)
+        pipeline.plot_only(args.output_dir, lang=lang)
+        return
+
     logger.info(
-        "Starting audit R=%d N=%d regimes=%s methods=%s brownian_mode=%s force=%s",
+        "Starting audit profile=%s R=%d N=%d regimes=%s methods=%s "
+        "brownian_mode=%s force=%s workers=%d lang=%s",
+        config.profile,
         config.n_realizations,
         config.n_steps,
         config.regimes,
         config.methods,
         config.brownian_mode,
         force_regimes,
+        workers,
+        lang,
     )
-    result = AuditPipeline(config).run(
+    result = pipeline.run(
         output_dir=args.output_dir,
         cache_dir=args.cache_dir,
         force_regimes=force_regimes,

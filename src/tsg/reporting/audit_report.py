@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Template
 
-from tsg.audit.pipeline import AuditResult
-from tsg.audit.verdict import Verdict
+from tsg.audit.pipeline import AuditResult, _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -107,26 +106,88 @@ def _df_html(df) -> str:
     return df.to_html(border=0, float_format=lambda x: f"{x:.4f}")
 
 
-def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Path]:
-    """Write ``report_phase1.md`` and autocontained HTML summary."""
+def _health_markdown_lines(result: AuditResult) -> list[str]:
+    """Drop taxonomy whose counts add up to ``dropped_features``.
+
+    ``low_variance_features`` here lists only non-structural columns (for
+    example ``transition__OPN__d_lcc``). Structural constants are counted
+    separately, so
+
+    ``numerical_nan + numerical_inf + structural_constant
+    + low_variance_non_structural == dropped``.
+    """
+    health = result.health
+    n_nan = len(health.numerical_nan_features)
+    n_inf = len(health.numerical_inf_features)
+    n_struct = len(health.structural_constant_features)
+    non_struct = list(health.low_variance_non_structural_features)
+    n_low = len(non_struct)
+    n_drop = len(health.dropped_features)
+    lines = [
+        f"- numerical_nan: {health.numerical_nan_features or '(ninguno)'}",
+        f"- numerical_inf: {health.numerical_inf_features or '(ninguno)'}",
+        f"- structural_constant: {n_struct} features",
+    ]
+    for name in health.structural_constant_features[:12]:
+        lines.append(f"  - `{name}`: {health.drop_reasons.get(name, '')}")
+    if n_struct > 12:
+        lines.append(f"  - … +{n_struct - 12} más")
+    lines.append(f"- low_variance_features (no estructurales): {n_low} features")
+    for name in non_struct[:16]:
+        lines.append(f"  - `{name}`: {health.drop_reasons.get(name, '')}")
+    if n_low > 16:
+        lines.append(f"  - … +{n_low - 16} más")
+    lines.append(
+        f"- dropped: {n_drop} = numerical_nan ({n_nan}) "
+        f"+ structural_constant ({n_struct}) "
+        f"+ low_variance_non_structural ({n_low}) "
+        f"+ numerical_inf ({n_inf})"
+    )
+    return lines
+
+
+def write_audit_reports(
+    result: AuditResult,
+    output_dir: Path,
+    *,
+    metrics: dict[str, Any] | None = None,
+) -> tuple[Path, Path]:
+    """Write ``report_phase1.md`` and autocontained HTML from one results payload."""
     output_dir = Path(output_dir)
     md_path = output_dir / "report_phase1.md"
     html_path = output_dir / "report_phase1.html"
     latest_html = output_dir / "latest.html"
 
+    payload = metrics if metrics is not None else result.metrics_dict()
+    generated_at = str(payload.get("generated_at_utc", result.generated_at_utc))
+    n_raw = int(payload.get("n_features_raw", result.health.n_features))
+    n_clean = int(
+        payload.get("n_features_clean", result.health.x_clean.shape[1])
+    )
+
     v = result.verdict
     full_rf = result.classification.full_rf()
     full_lin = result.classification.full_linear()
+    brownian_note = (
+        "STN/OPN operan sobre la **trayectoria browniana integrada** (`levels`) "
+        "y, de forma consistente, sobre las trayectorias fBm integradas; "
+        "visibility/proximity/similarity siempre ven la serie en bruto."
+        if result.config.brownian_mode == "levels"
+        else f"Modo activo: `{result.config.brownian_mode}`."
+    )
 
     # Markdown
     lines = [
         "# Fase 1 — Auditoría de discriminabilidad de la matriz D",
         "",
-        f"- Generado (UTC): `{datetime.now(timezone.utc).isoformat()}`",
+        f"- Generado (UTC): `{generated_at}`",
+        f"- Perfil: `{result.config.profile}`",
         f"- Realizaciones por régimen: **{result.config.n_realizations}**",
         f"- N: **{result.config.n_steps}**",
         f"- brownian_mode: `{result.config.brownian_mode}`",
+        f"- Nota brownian: {brownian_note}",
         f"- Semilla: `{result.config.seed}`",
+        f"- Features brutas / limpias: **{n_raw}** / **{n_clean}**",
         "",
         f"## Veredicto: {v.verdict.value}",
         "",
@@ -147,9 +208,36 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
         )
     lines.append(f"- Silhouette global: **{result.geometry.silhouette_global:.4f}**")
     lines.append(
-        f"- Features usadas: **{result.health.x_clean.shape[1]}** "
-        f"(dropped {len(result.health.dropped_features)})"
+        f"- Features usadas: **{n_clean}** "
+        f"(raw {n_raw}, dropped {len(result.health.dropped_features)})"
     )
+
+    lines += ["", "### Silhouette por régimen", ""]
+    for k, val in result.geometry.silhouette_by_regime.items():
+        lines.append(f"- `{k}`: {val:.4f}")
+
+    lines += ["", "### Macro-F1 por vista (RF / LR)", ""]
+    view_names = sorted({m.view for m in result.classification.views})
+    for view in view_names:
+        rf = next(
+            (
+                m
+                for m in result.classification.views
+                if m.view == view and m.model == "random_forest"
+            ),
+            None,
+        )
+        lr = next(
+            (
+                m
+                for m in result.classification.views
+                if m.view == view and m.model == "logistic"
+            ),
+            None,
+        )
+        rf_s = f"{rf.macro_f1_mean:.4f}" if rf is not None else "N/A"
+        lr_s = f"{lr.macro_f1_mean:.4f}" if lr is not None else "N/A"
+        lines.append(f"- `{view}`: RF={rf_s}, LR={lr_s}")
 
     lines += ["", "### F1 por régimen (RF full)", ""]
     if full_rf is not None:
@@ -159,6 +247,9 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
     lines += ["", "### Confusión en pares críticos", ""]
     for k, val in result.classification.critical_pair_confusion_rate.items():
         lines.append(f"- `{k}`: {100*val:.2f}%")
+
+    lines += ["", "### Salud de descriptores (clasificación de drops)", ""]
+    lines.extend(_health_markdown_lines(result))
 
     lines += [
         "",
@@ -198,7 +289,7 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
         lines.append(f"![{p.stem}]({rel.as_posix()})")
         lines.append("")
 
-    md_path.write_text("\n".join(lines), encoding="utf-8")
+    _atomic_write_text(md_path, "\n".join(lines))
 
     # HTML with embedded figures
     import pandas as pd
@@ -227,16 +318,29 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
             "std": 0.0,
         }
     )
+    kpi_rows.append({"metric": "n_features_raw", "value": float(n_raw), "std": 0.0})
+    kpi_rows.append(
+        {"metric": "n_features_clean", "value": float(n_clean), "std": 0.0}
+    )
     kpi_table = _df_html(pd.DataFrame(kpi_rows))
     health_table = _df_html(
         pd.DataFrame(
             [
                 {
-                    "n_features_raw": result.health.n_features,
-                    "n_features_clean": result.health.x_clean.shape[1],
+                    "n_features_raw": n_raw,
+                    "n_features_clean": n_clean,
                     "n_nan_features": len(result.health.nan_features),
+                    "n_numerical_nan": len(result.health.numerical_nan_features),
+                    "n_structural_constant": len(
+                        result.health.structural_constant_features
+                    ),
                     "n_inf_features": len(result.health.inf_features),
                     "n_low_variance": len(result.health.low_variance_features),
+                    "n_low_variance_non_structural": len(
+                        result.health.low_variance_non_structural_features
+                    ),
+                    "n_numerical_inf": len(result.health.numerical_inf_features),
+                    "n_dropped": len(result.health.dropped_features),
                     "n_samples": result.health.n_samples,
                 }
             ]
@@ -260,7 +364,8 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
     importance_note = (
         "Permutation Importance univariante se sustituyó por Gini (RF) y norma L2 "
         "de coeficientes (LR): con Macro-F1 = 1.00 y descriptores colineales, "
-        "permutar una sola columna no degrada el score (importancias ≈ 0)."
+        "permutar una sola columna no degrada el score (importancias ≈ 0). "
+        f"{brownian_note}"
     )
     rf_importance_table = _importance_html(result.classification.rf_gini_importance)
     lr_importance_table = _importance_html(result.classification.logistic_l2_importance)
@@ -274,7 +379,8 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
         title="Fase 1 — Auditoría de discriminabilidad",
         subtitle=(
             f"R={result.config.n_realizations}, N={result.config.n_steps}, "
-            f"brownian_mode={result.config.brownian_mode}"
+            f"brownian_mode={result.config.brownian_mode}, "
+            f"features={n_raw}/{n_clean}, generated={generated_at}"
         ),
         verdict=v.verdict.value,
         reasons=v.reasons,
@@ -287,7 +393,7 @@ def write_audit_reports(result: AuditResult, output_dir: Path) -> tuple[Path, Pa
         lr_importance_table=lr_importance_table,
         figures=figures,
     )
-    html_path.write_text(html, encoding="utf-8")
-    latest_html.write_text(html, encoding="utf-8")
+    _atomic_write_text(html_path, html)
+    _atomic_write_text(latest_html, html)
     logger.info("Wrote audit reports %s and %s", md_path, html_path)
     return md_path, html_path

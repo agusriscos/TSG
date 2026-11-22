@@ -1,0 +1,53 @@
+# Bloque 3 — fronteras dinámicas difíciles.
+# phase1_audit.yaml no se modifica. Los rangos de Hurst, ARMA, Rössler, Hénon,
+# logístico débil y el empalme de régimen viven en los dataclasses de
+# tsg.generators.config (valores por defecto de la especificación).
+audit:
+  n_steps: 1500
+  n_realizations: 30
+  seed: 42
+  profile: paper
+  brownian_mode: levels   # trayectoria integrada (brownian y ambos fBm)
+  n_folds: 5
+  variance_eps: 1.0e-12
+  figure_dpi: 300
+  profiles:
+    dev:
+      n_realizations: 10
+      n_steps: 1000
+    paper:
+      n_realizations: 30
+      n_steps: 1500
+  regimes:
+    - white_noise
+    - fbm_antipersistent
+    - brownian
+    - fbm_persistent
+    - arma_correlated
+    - quasiperiodic
+    - lorenz
+    - rossler
+    - henon
+    - logistic_weak
+    - logistic
+    - regime_switching
+  methods:
+    - NVG
+    - HVG
+    - RN
+    - kNN
+    - STN
+    - OPN
+    - Correlation
+    - Segment
+  families:
+    visibility: [NVG, HVG]
+    transition: [STN, OPN]
+    proximity: [RN, kNN]
+    similarity: [Correlation, Segment]
+  critical_pairs:
+    - [arma_correlated, lorenz]
+    - [lorenz, rossler]
+    - [fbm_persistent, brownian]
+    - [logistic_weak, logistic]
+    - [regime_switching, quasiperiodic]
