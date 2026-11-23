@@ -215,5 +215,10 @@ copy_tables "${SURR_OUT}/data/tables" "b2"
 copy_tables "${INV_OUT}/data/tables" "b4"
 copy_tables "${PM_OUT}/data/tables" "b5"
 
+mkdir -p "${BUNDLE}/notes"
+if [[ -f "${SURR_OUT}/arma_iaaft_diagnosis.md" ]]; then
+  cp -f "${SURR_OUT}/arma_iaaft_diagnosis.md" "${BUNDLE}/notes/b2_arma_iaaft_diagnosis.md"
+fi
+
 echo "===== paper suite finished $(date -u +%Y-%m-%dT%H:%M:%SZ) =====" | tee -a "${LOG}"
 echo "Bundle ready: ${BUNDLE}"

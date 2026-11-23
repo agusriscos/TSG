@@ -13,6 +13,10 @@ from tsg.audit.surrogates import (
     SurrogateAuditResult,
     _format_markdown,
     _plot_summary_figure,
+    _surrogate_job,
+    collect_dhvg_irreversibility,
+    plot_dhvg_irreversibility,
+    summarize_dhvg_irreversibility,
 )
 from tsg.descriptors.directional import temporal_irreversibility_kl
 from tsg.descriptors.pipeline import DescriptorPipeline
@@ -226,6 +230,197 @@ def test_dhvg_idir_nonzero_on_chaotic(chaotic_series: np.ndarray) -> None:
     assert temporal_irreversibility_kl(dhvg.graph) > 0.0
 
 
+def test_summarize_dhvg_irreversibility_paired_wilcoxon() -> None:
+    """Original dHVG KL separates from surrogates; saturated i_dir does not."""
+    from tsg.audit.surrogates import summarize_dhvg_irreversibility
+
+    rng = np.random.default_rng(0)
+    rows: list[dict[str, object]] = []
+    for realization in range(16):
+        rows.append(
+            {
+                "dataset_id": "logistic",
+                "realization": realization,
+                "surrogate_kind": "original",
+                "i_dir": 1.0,
+                "kl_inout": 0.30 + 0.004 * float(rng.normal()),
+            }
+        )
+        for kind, center in (("shuffled", 0.02), ("ft", 0.05), ("iaaft", 0.04)):
+            rows.append(
+                {
+                    "dataset_id": "logistic",
+                    "realization": realization,
+                    "surrogate_kind": kind,
+                    "i_dir": 1.0,
+                    "kl_inout": center + 0.004 * float(rng.normal()),
+                }
+            )
+    import pandas as pd
+
+    table = summarize_dhvg_irreversibility(pd.DataFrame(rows))
+    assert set(table["metric"]) == {"dHVG__kl_inout", "dHVG__i_dir"}
+    assert set(table["contrast"]) == {"shuffled", "ft", "iaaft"}
+    assert (table["test"] == "wilcoxon_signed_rank").all()
+    assert (table["effect_size_name"] == "rank_biserial").all()
+
+    kl_shuf = table[
+        (table["metric"] == "dHVG__kl_inout") & (table["contrast"] == "shuffled")
+    ].iloc[0]
+    assert kl_shuf["n_pairs"] == 16
+    assert kl_shuf["mean_original"] > kl_shuf["mean_surrogate"]
+    assert kl_shuf["median_original"] > kl_shuf["median_surrogate"]
+    assert kl_shuf["p_value"] < 0.01
+    assert kl_shuf["effect_size"] > 0.9
+
+    idir = table[
+        (table["metric"] == "dHVG__i_dir") & (table["contrast"] == "iaaft")
+    ].iloc[0]
+    assert idir["mean_original"] == pytest.approx(1.0)
+    assert idir["mean_surrogate"] == pytest.approx(1.0)
+    assert idir["std_original"] == pytest.approx(0.0)
+    assert idir["p_value"] == pytest.approx(1.0)
+    assert idir["effect_size"] == pytest.approx(0.0)
+
+
+def test_collect_dhvg_irreversibility_uses_stored_kl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stored ``kl_inout`` is read from the matrix and graphs are not rebuilt."""
+    import pandas as pd
+
+    from tsg.audit.surrogates import SurrogateAuditConfig, collect_dhvg_irreversibility
+    from tsg.descriptors.base import DESCRIPTOR_IDS
+
+    index = list(DESCRIPTOR_IDS) + ["kl_inout"]
+    matrix = pd.DataFrame(0.0, index=index, columns=["HVG", "dHVG"])
+    matrix.loc["i_dir", "dHVG"] = 0.37
+    matrix.loc["kl_inout", "dHVG"] = 0.21
+
+    def _boom(*_args: object, **_kwargs: object) -> dict[tuple[str, int, str], float]:
+        raise AssertionError("dHVG should not be recomputed when kl_inout is stored")
+
+    monkeypatch.setattr("tsg.audit.surrogates._recompute_kl_map", _boom)
+    frame = collect_dhvg_irreversibility(
+        [
+            {
+                "dataset_id": "logistic",
+                "regime": "chaotic",
+                "realization": 0,
+                "seed": 1,
+                "surrogate_kind": "original",
+                "series_length": 8,
+                "matrix": matrix,
+            }
+        ],
+        SurrogateAuditConfig(),
+    )
+    assert frame.loc[0, "kl_source"] == "records"
+    assert frame.loc[0, "kl_inout"] == pytest.approx(0.21)
+    assert frame.loc[0, "i_dir"] == pytest.approx(0.37)
+
+
+def test_plot_dhvg_irreversibility_writes_trio(tmp_path: Path) -> None:
+    import pandas as pd
+
+    from tsg.audit.surrogates import plot_dhvg_irreversibility
+
+    frame = pd.DataFrame(
+        [
+            {
+                "dataset_id": "logistic",
+                "realization": r,
+                "surrogate_kind": kind,
+                "i_dir": 1.0,
+                "kl_inout": 0.2 if kind == "original" else 0.02,
+            }
+            for r in range(6)
+            for kind in ("original", "shuffled", "ft", "iaaft")
+        ]
+    )
+    paths = plot_dhvg_irreversibility(frame, tmp_path, lang="en", regimes=("logistic",))
+    stems = {p.stem for p in paths}
+    suffixes = {p.suffix for p in paths}
+    assert stems == {"surrogate_dhvg_irreversibility"}
+    assert suffixes == {".png", ".pdf", ".svg"}
+    assert all(p.stat().st_size > 0 for p in paths)
+
+
+def test_collect_dhvg_kl_recomputes_only_directed_hvg() -> None:
+    """``kl_inout`` is absent from the 16-vector and is rebuilt from dHVG."""
+    import pandas as pd
+    from dataclasses import replace
+
+    from tsg.audit.config import AuditConfig
+    from tsg.descriptors.config import DescriptorConfig
+    from tsg.descriptors.directional import temporal_irreversibility_kl
+    from tsg.generators.config import GeneratorSuiteConfig
+    from tsg.generators.registry import build_generator
+    from tsg.graphs.geometry import DHVGTransformer
+
+    cfg = SurrogateAuditConfig(
+        audit=replace(
+            AuditConfig(),
+            n_steps=160,
+            n_realizations=1,
+            seed=42,
+            n_folds=2,
+            profile="dev",
+            regimes=("white_noise",),
+            methods=("HVG", "dHVG"),
+            families={"visibility": ("HVG", "dHVG")},
+        ),
+        iaaft_max_iter=15,
+        iaaft_min_iter=2,
+        iaaft_tol=1e-4,
+    )
+    generator_config = GeneratorSuiteConfig()
+    descriptor_config = DescriptorConfig()
+    records = [
+        _surrogate_job(
+            "white_noise",
+            0,
+            kind,
+            config=cfg,
+            generator_config=generator_config,
+            descriptor_config=descriptor_config,
+        )
+        for kind in ("original", "shuffled", "ft", "iaaft")
+    ]
+    assert "kl_inout" not in records[0]["matrix"].index
+    frame = collect_dhvg_irreversibility(
+        records,
+        cfg,
+        generator_config=generator_config,
+        n_workers=1,
+    )
+    assert set(frame["kl_source"]) == {"recomputed_dhvg"}
+    assert np.allclose(frame["i_dir"], 1.0)
+    assert (frame["kl_inout"] >= 0.0).all()
+    assert frame["kl_inout"].nunique() >= 2
+
+    original = next(rec for rec in records if rec["surrogate_kind"] == "original")
+    series = build_generator("white_noise", generator_config).generate(
+        cfg.audit.n_steps,
+        seed=int(original["seed"]),
+    )
+    direct = temporal_irreversibility_kl(
+        DHVGTransformer().transform(np.asarray(series.values, dtype=float), "white_noise").graph
+    )
+    stored = float(frame.loc[frame["surrogate_kind"] == "original", "kl_inout"].iloc[0])
+    assert stored == pytest.approx(direct)
+
+    again = collect_dhvg_irreversibility(
+        records,
+        cfg,
+        generator_config=generator_config,
+        n_workers=2,
+    )
+    pd.testing.assert_frame_equal(frame, again)
+
+    summary = summarize_dhvg_irreversibility(frame)
+    assert len(summary) == 6
+    assert (summary.loc[summary["metric"] == "dHVG__i_dir", "p_value"] == 1.0).all()
+
+
 def test_dhvg_registered_opt_in_not_default() -> None:
     assert "dHVG" not in METHOD_IDS
     assert "dHVG" in ALL_METHOD_IDS
@@ -233,3 +428,29 @@ def test_dhvg_registered_opt_in_not_default() -> None:
     assert all(t.method != "dHVG" for t in default)
     with_dhvg = build_transformers(TS2GSuiteConfig(methods=("HVG", "dHVG")))
     assert [t.method for t in with_dhvg] == ["HVG", "dHVG"]
+
+
+def test_temporal_row_additive_decomposition() -> None:
+    from tsg.audit.surrogates import _temporal_row
+
+    row = _temporal_row(f1_orig=1.0, f1_shuf=0.2, f1_ft=0.5, f1_iaaft=0.8)
+    assert row["delta_T"] == pytest.approx(0.8)
+    assert row["delta_marginal"] == pytest.approx(0.2)
+    assert row["delta_linear"] == pytest.approx(0.3)
+    assert row["delta_iaaft_minus_ft"] == pytest.approx(0.3)
+    assert row["delta_nonlinear"] == pytest.approx(0.2)
+    assert (
+        row["delta_marginal"]
+        + row["delta_linear"]
+        + row["delta_iaaft_minus_ft"]
+        + row["delta_nonlinear"]
+    ) == pytest.approx(row["macro_f1_original"])
+
+
+def test_end_match_series_closes_periodic_seam() -> None:
+    from scripts.diagnose_arma_iaaft import end_match_series
+
+    raw = np.linspace(0.0, 1.0, 64) + 0.05 * np.sin(np.linspace(0.0, 8.0, 64))
+    matched = end_match_series(raw)
+    assert matched[0] == pytest.approx(matched[-1])
+    assert abs(raw[0] - raw[-1]) > 0.5

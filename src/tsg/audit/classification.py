@@ -76,6 +76,10 @@ class ClassificationResult:
     rf_gini_importance: pd.DataFrame | None = None
     logistic_l2_importance: pd.DataFrame | None = None
     critical_pair_confusion_rate: dict[str, float] = field(default_factory=dict)
+    # pair → view → model → metrics (all views × both models).
+    critical_pair_details: dict[str, dict[str, dict[str, dict[str, float]]]] = field(
+        default_factory=dict
+    )
 
     def full_rf(self) -> ViewMetrics | None:
         for v in self.views:
@@ -101,6 +105,7 @@ class ClassificationResult:
             "rf_gini_importance": _records(self.rf_gini_importance),
             "logistic_l2_importance": _records(self.logistic_l2_importance),
             "critical_pair_confusion_rate": self.critical_pair_confusion_rate,
+            "critical_pair_details": self.critical_pair_details,
         }
 
     def oof_bundles(self) -> dict[str, dict[str, Any]]:
@@ -252,6 +257,73 @@ def _critical_confusion_rates(
     return rates
 
 
+def _mean_prob_margin(
+    view: ViewMetrics,
+    a: str,
+    b: str,
+) -> float:
+    """Mean |P(a) − P(b)| over OOF samples whose true label is in ``{a, b}``."""
+    if view.y_proba is None or view.y_proba.size == 0 or not view.y_true:
+        return float("nan")
+    class_names = list(view.class_names) if view.class_names else []
+    if a not in class_names or b not in class_names:
+        return float("nan")
+    idx_a = class_names.index(a)
+    idx_b = class_names.index(b)
+    mask = np.asarray([(yt == a or yt == b) for yt in view.y_true], dtype=bool)
+    if not np.any(mask):
+        return float("nan")
+    proba = np.asarray(view.y_proba, dtype=float)
+    margins = np.abs(proba[mask, idx_a] - proba[mask, idx_b])
+    return float(np.nanmean(margins))
+
+
+def _critical_pair_details_for_view(
+    view: ViewMetrics,
+    critical_pairs: tuple[tuple[str, str], ...],
+) -> dict[str, dict[str, float]]:
+    """Per-pair continuous metrics for a single ``(view, model)`` block."""
+    cm_norm = view.confusion_normalized
+    out: dict[str, dict[str, float]] = {}
+    for a, b in critical_pairs:
+        if a not in cm_norm.index or b not in cm_norm.columns:
+            continue
+        key = f"{a}__{b}"
+        conf_ab = float(cm_norm.loc[a, b])
+        conf_ba = float(cm_norm.loc[b, a])
+        f1_a = float(view.f1_by_class.get(a, float("nan")))
+        f1_b = float(view.f1_by_class.get(b, float("nan")))
+        out[key] = {
+            "confusion_rate": 0.5 * (conf_ab + conf_ba),
+            "confusion_a_to_b": conf_ab,
+            "confusion_b_to_a": conf_ba,
+            "pair_macro_f1": 0.5 * (f1_a + f1_b),
+            "mean_prob_margin": _mean_prob_margin(view, a, b),
+        }
+    return out
+
+
+def compute_critical_pair_details(
+    views: Sequence[ViewMetrics],
+    critical_pairs: tuple[tuple[str, str], ...],
+) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
+    """Aggregate critical-pair metrics over all views and models.
+
+    Returns
+    -------
+    dict
+        Nested map ``pair → view → model → metrics``.
+    """
+    nested: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+    for view in views:
+        per_pair = _critical_pair_details_for_view(view, critical_pairs)
+        for pair_key, metrics in per_pair.items():
+            nested.setdefault(pair_key, {}).setdefault(view.view, {})[view.model] = (
+                metrics
+            )
+    return nested
+
+
 def _importance_dataframe(
     feature_names: Sequence[str],
     fold_importances: np.ndarray,
@@ -350,4 +422,8 @@ def evaluate_classification(
             full_rf.confusion_normalized,
             config.critical_pairs,
         )
+    results.critical_pair_details = compute_critical_pair_details(
+        results.views,
+        config.critical_pairs,
+    )
     return results

@@ -54,6 +54,15 @@ def _style() -> None:
     )
 
 
+def _model_label(model_name: str, lang: str) -> str:
+    """Publication name of a classifier, translated for ``lang``."""
+    key = f"model_{model_name}"
+    translated = _t(key, lang)
+    if translated == key:
+        return MODEL_LABELS.get(model_name, model_name)
+    return translated
+
+
 def plot_pid(result: InformationAuditResult, path: Path, dpi: int, lang: str = "en") -> None:
     """Stacked MMI atoms for the six family pairs."""
     _style()
@@ -65,13 +74,19 @@ def plot_pid(result: InformationAuditResult, path: Path, dpi: int, lang: str = "
     synergy = np.array([atom.synergy for atom in atoms], dtype=float)
     x = np.arange(len(atoms))
     fig, ax = plt.subplots(figsize=(10.6, 5.6))
-    ax.bar(x, redundancy, color=_PID_COLORS["redundancy"], label="Redundancia", width=0.72)
+    ax.bar(
+        x,
+        redundancy,
+        color=_PID_COLORS["redundancy"],
+        label=_t("pid_redundancy", lang),
+        width=0.72,
+    )
     ax.bar(
         x,
         unique_i,
         bottom=redundancy,
         color=_PID_COLORS["unique_i"],
-        label="Única (1ª familia)",
+        label=_t("pid_unique_i", lang),
         width=0.72,
     )
     ax.bar(
@@ -79,7 +94,7 @@ def plot_pid(result: InformationAuditResult, path: Path, dpi: int, lang: str = "
         unique_j,
         bottom=redundancy + unique_i,
         color=_PID_COLORS["unique_j"],
-        label="Única (2ª familia)",
+        label=_t("pid_unique_j", lang),
         width=0.72,
     )
     positive = np.clip(synergy, 0.0, None)
@@ -89,7 +104,7 @@ def plot_pid(result: InformationAuditResult, path: Path, dpi: int, lang: str = "
         positive,
         bottom=redundancy + unique_i + unique_j,
         color=_PID_COLORS["synergy"],
-        label="Sinergia",
+        label=_t("pid_synergy", lang),
         width=0.72,
     )
     if np.any(negative < -1e-4):
@@ -97,13 +112,13 @@ def plot_pid(result: InformationAuditResult, path: Path, dpi: int, lang: str = "
             x,
             negative,
             color=_PID_COLORS["synergy_negative"],
-            label="Sinergia negativa",
+            label=_t("pid_synergy_negative", lang),
             width=0.72,
         )
     ax.axhline(0.0, color="#444444", lw=0.8)
     ax.set_xticks(x, labels)
-    ax.set_ylabel("Información (bits)")
-    ax.set_xlabel("Par de familias (1ª | 2ª)")
+    ax.set_ylabel(_t("pid_ylabel", lang))
+    ax.set_xlabel(_t("pid_xlabel", lang))
     ax.set_title(_t("pid_title", lang))
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=3, frameon=False)
     ax.yaxis.grid(True, linestyle=":", alpha=0.5)
@@ -127,11 +142,17 @@ def plot_shapley(result: InformationAuditResult, path: Path, dpi: int, lang: str
         phi = result.shapley["by_model"][model_name]["phi"]
         values = np.array([phi[family] for family in FAMILY_ORDER], dtype=float)
         collected.append(values)
-        ax.bar(x + offset, values, width=width, color=color, label=MODEL_LABELS[model_name])
+        ax.bar(
+            x + offset,
+            values,
+            width=width,
+            color=color,
+            label=_model_label(model_name, lang),
+        )
     ax.axhline(0.0, color="#444444", lw=0.8)
     ax.set_xticks(x, labels)
-    ax.set_ylabel("Valor de Shapley (Macro-F1)")
-    ax.set_xlabel("Familia TS2G")
+    ax.set_ylabel(_t("shapley_ylabel", lang))
+    ax.set_xlabel(_t("shapley_xlabel", lang))
     ax.set_title(_t("shapley_title", lang))
     stacked = np.concatenate(collected)
     pad = 0.08 * (float(np.max(np.abs(stacked))) + 1e-3)
@@ -142,14 +163,14 @@ def plot_shapley(result: InformationAuditResult, path: Path, dpi: int, lang: str
     _save_figure(fig, path, dpi)
 
 
-def _front_caption(ax: plt.Axes, rows: list[dict], front: list[dict]) -> None:
+def _front_caption(ax: plt.Axes, rows: list[dict], front: list[dict], lang: str) -> None:
     """List the front, cheapest first, in the empty part of the axes.
 
     Point-wise labels collide once several combinations sit near Macro-F1 = 1.
     A single caption keeps those names readable and off the markers.
     """
     ordered = sorted(front, key=lambda row: row["time_ms_mean"])
-    text = "Frontera\n" + "\n".join(row["label"] for row in ordered)
+    text = _t("pareto_front", lang) + "\n" + "\n".join(row["label"] for row in ordered)
     figure = ax.figure
     figure.canvas.draw()
     renderer = figure.canvas.get_renderer()
@@ -237,13 +258,13 @@ def plot_pareto(result: InformationAuditResult, path: Path, dpi: int, lang: str 
             )
         ax.set_xscale("log")
         ax.set_xlim(float(costs.min()) / 1.7, float(costs.max()) * 1.45)
-        ax.set_title(MODEL_LABELS[model_name])
-        ax.set_xlabel(f"Tiempo por serie (ms, N={n_steps})")
+        ax.set_title(_model_label(model_name, lang))
+        ax.set_xlabel(_t("pareto_xlabel", lang, n_steps=n_steps))
         ax.set_ylim(ymin, ymax)
         ax.grid(True, which="both", linestyle=":", alpha=0.45)
         ax.set_axisbelow(True)
         if front:
-            _front_caption(ax, rows, front)
+            _front_caption(ax, rows, front, lang)
     axes[0].set_ylabel("Macro-F1")
     handles = [
         Line2D(
@@ -254,7 +275,11 @@ def plot_pareto(result: InformationAuditResult, path: Path, dpi: int, lang: str 
             markerfacecolor=_SIZE_COLORS[size],
             markeredgecolor="none",
             markersize=8,
-            label=f"{size} familia" if size == 1 else f"{size} familias",
+            label=_t(
+                "pareto_n_families_one" if size == 1 else "pareto_n_families_many",
+                lang,
+                size=size,
+            ),
         )
         for size in (1, 2, 3, 4)
     ]
@@ -267,7 +292,7 @@ def plot_pareto(result: InformationAuditResult, path: Path, dpi: int, lang: str 
             markerfacecolor="#333333",
             markeredgecolor="#333333",
             markersize=12,
-            label="frontera",
+            label=_t("pareto_front_legend", lang),
         )
     )
     fig.legend(

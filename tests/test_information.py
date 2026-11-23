@@ -174,6 +174,31 @@ def test_dynamic_groups_are_disjoint() -> None:
         seen.update(members)
 
 
+def test_dynamic_groups_cover_paper_panel() -> None:
+    """Quasiperiodic + regime_switching live in structured_other; 12 regimes total."""
+    covered = {name for members in DYNAMIC_GROUPS.values() for name in members}
+    expected = {
+        "white_noise",
+        "fbm_antipersistent",
+        "brownian",
+        "fbm_persistent",
+        "arma_correlated",
+        "quasiperiodic",
+        "lorenz",
+        "rossler",
+        "henon",
+        "logistic_weak",
+        "logistic",
+        "regime_switching",
+    }
+    assert covered == expected
+    assert "structured_other" in DYNAMIC_GROUPS
+    assert set(DYNAMIC_GROUPS["structured_other"]) == {
+        "quasiperiodic",
+        "regime_switching",
+    }
+
+
 def test_majority_baseline_on_balanced_three_classes() -> None:
     y = pd.Series(["a", "b", "c"] * 12)
     config = AuditConfig(n_folds=4, seed=0, regimes=("a", "b", "c"))

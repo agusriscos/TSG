@@ -18,9 +18,9 @@ from tsg.audit.ensemble import (
     load_generator_suite_config,
 )
 from tsg.audit.features import build_feature_table, feature_name, matrix_to_feature_row
-from tsg.audit.geometry import analyze_geometry
+from tsg.audit.geometry import analyze_geometry, compute_critical_pair_geometry_by_view
 from tsg.audit.health import diagnose_and_clean
-from tsg.audit.pipeline import AuditPipeline
+from tsg.audit.pipeline import AuditPipeline, build_critical_pairs_by_family_frame
 from tsg.audit.verdict import Verdict, decide_verdict
 from tsg.descriptors.base import DESCRIPTOR_IDS
 from tsg.generators.config import GeneratorSuiteConfig
@@ -375,3 +375,117 @@ def test_publication_plotting_includes_similarity_and_svg(tmp_path: Path) -> Non
     assert "rotation=45" in abl_src
     assert 'ha="right"' in abl_src
     assert "rotation_mode" in abl_src
+
+
+def test_critical_pairs_by_family_and_pair_silhouette(tmp_path: Path) -> None:
+    """Per-family critical-pair table + pair_silhouette on two-class subsets."""
+    from tsg.audit.plotting import plot_critical_pairs_family_analysis
+
+    cfg = AuditConfig(
+        n_realizations=6,
+        n_folds=3,
+        n_steps=64,
+        figure_dpi=80,
+        critical_pairs=(("lorenz", "logistic"), ("sine", "quasiperiodic")),
+    )
+    records = []
+    for dataset_id in cfg.regimes:
+        for r in range(cfg.n_realizations):
+            records.append(
+                {
+                    "dataset_id": dataset_id,
+                    "realization": r,
+                    "matrix": _fake_matrix(dataset_id, noise=0.02),
+                }
+            )
+    x, y = build_feature_table(records, cfg)
+    health = diagnose_and_clean(x, cfg)
+    geometry = analyze_geometry(health.x_clean, y, cfg)
+    classification = evaluate_classification(health.x_clean, y, cfg)
+
+    assert classification.critical_pair_confusion_rate
+    assert classification.critical_pair_details
+    assert "lorenz__logistic" in classification.critical_pair_details
+    pair_block = classification.critical_pair_details["lorenz__logistic"]
+    assert set(pair_block) >= {"visibility", "transition", "full"}
+    for view_metrics in pair_block.values():
+        assert set(view_metrics) == {"random_forest", "logistic"}
+        for metrics in view_metrics.values():
+            assert "confusion_rate" in metrics
+            assert "confusion_a_to_b" in metrics
+            assert "confusion_b_to_a" in metrics
+            assert "pair_macro_f1" in metrics
+            assert "mean_prob_margin" in metrics
+            assert 0.0 <= metrics["mean_prob_margin"] <= 1.0 + 1e-9
+
+    assert "full" in geometry.critical_pair_geometry_by_view
+    full_pair = geometry.critical_pair_geometry_by_view["full"]["lorenz__logistic"]
+    assert "pair_silhouette" in full_pair
+    assert "centroid_euclidean_norm" in full_pair
+    assert "centroid_cosine" in full_pair
+    assert "fisher_ratio" in full_pair
+    assert full_pair["n_features"] == float(health.x_clean.shape[1])
+    # Separable synthetic offsets → positive pair silhouette on full view.
+    assert full_pair["pair_silhouette"] > 0.5
+    assert full_pair["fisher_ratio"] > 0.0
+
+    # Direct unit check: overlapping classes → lower silhouette than separated ones.
+    rng = np.random.default_rng(0)
+    x_overlap = pd.DataFrame(
+        {
+            "visibility__NVG__c_avg": np.concatenate(
+                [rng.normal(0.0, 1.0, 20), rng.normal(0.1, 1.0, 20)]
+            ),
+            "transition__STN__lambda2_g": np.concatenate(
+                [rng.normal(0.0, 1.0, 20), rng.normal(-0.1, 1.0, 20)]
+            ),
+        }
+    )
+    y_overlap = pd.Series(["a"] * 20 + ["b"] * 20)
+    geo_overlap = compute_critical_pair_geometry_by_view(
+        x_overlap, y_overlap, (("a", "b"),)
+    )
+    assert geo_overlap["full"]["a__b"]["pair_silhouette"] < 0.5
+
+    frame = build_critical_pairs_by_family_frame(classification, geometry)
+    assert not frame.empty
+    required = {
+        "pair",
+        "view",
+        "model",
+        "confusion_rate",
+        "confusion_a_to_b",
+        "confusion_b_to_a",
+        "pair_macro_f1",
+        "mean_prob_margin",
+        "pair_silhouette",
+        "centroid_euclidean_norm",
+        "centroid_cosine",
+        "fisher_ratio",
+        "n_features",
+    }
+    assert required.issubset(frame.columns)
+    assert set(frame["model"]) == {"logistic", "random_forest"}
+
+    pipe = AuditPipeline(config=cfg, lang="en")
+    result = pipe.run(records=records, output_dir=tmp_path / "audit_out")
+    csv_path = tmp_path / "audit_out" / "data" / "tables" / "critical_pairs_by_family.csv"
+    assert csv_path.exists()
+    loaded = pd.read_csv(csv_path)
+    assert not loaded.empty
+    assert "pair_silhouette" in loaded.columns
+    # Legacy table still written.
+    assert (tmp_path / "audit_out" / "data" / "tables" / "critical_pairs.csv").exists()
+    metrics = json.loads(
+        (tmp_path / "audit_out" / "metrics_summary.json").read_text(encoding="utf-8")
+    )
+    assert "critical_pairs_by_family" in metrics
+    assert metrics["classification"]["critical_pair_details"]
+    assert metrics["geometry"]["critical_pair_geometry_by_view"]
+
+    fig_path = plot_critical_pairs_family_analysis(
+        result.classification, result.geometry, cfg, tmp_path / "figs"
+    )
+    assert fig_path.exists()
+    assert fig_path.with_suffix(".svg").exists()
+    assert fig_path.with_suffix(".pdf").exists()

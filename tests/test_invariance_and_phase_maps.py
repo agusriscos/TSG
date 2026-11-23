@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import pickle
 from pathlib import Path
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 import pytest
 
+from tsg.audit.config import AuditConfig
 from tsg.audit.features import (
     SPECTRAL_DESCRIPTOR_IDS,
     TOPOLOGICAL_DESCRIPTOR_IDS,
@@ -15,12 +19,17 @@ from tsg.audit.features import (
 )
 from tsg.audit.invariance import (
     InvarianceAuditConfig,
+    InvarianceAuditPipeline,
     InvarianceAuditResult,
     _format_markdown,
+    _method_view_specs,
+    compute_invariance_metrics,
 )
 from tsg.audit.phase_maps import (
     PhaseMapsAuditConfig,
+    PhaseMapsAuditPipeline,
     PhaseMapsAuditResult,
+    _nan_failure_rate,
     collapse_snr_thresholds,
     snr_label,
 )
@@ -214,6 +223,285 @@ def test_collapse_snr_thresholds_logic() -> None:
         f1_threshold=0.80,
     )
     assert thr["per_view"]["full"]["500"]["collapse_snr_db"] == "10"
+
+
+def test_method_tables_and_strict_monotone_invariance(tmp_path: Path) -> None:
+    """HVG and OPN stay exactly invariant under a monotone map, per method.
+
+    The family aggregate is intentionally not invariant, because NVG and STN
+    columns move. ``plot_only`` must rebuild ``per_method`` from ``records.pkl``
+    without touching a pre-existing ``per_family`` block, and must write the
+    method CSVs plus the per-method figure trio.
+    """
+    columns = [
+        "visibility__HVG__c_avg",
+        "visibility__NVG__c_avg",
+        "transition__OPN__e_glob",
+        "transition__STN__e_glob",
+        "proximity__kNN__cv_k",
+        "proximity__RN__cv_k",
+    ]
+    specs = dict(
+        _method_view_specs(
+            columns,
+            ("HVG", "NVG", "OPN", "STN", "RN", "kNN", "Correlation"),
+        )
+    )
+    assert "STN" in specs and "Correlation" not in specs
+    assert specs["HVG"].tolist() == [True, False, False, False, False, False]
+    assert specs["RN"].tolist() == [False, False, False, False, False, True]
+    assert specs["kNN"].tolist() == [False, False, False, False, True, False]
+
+    methods = ("HVG", "NVG", "OPN", "STN")
+    descriptors = ("c_avg", "e_glob", "cv_k")
+    regimes = ("white_noise", "logistic")
+    rng = np.random.default_rng(0)
+    records: list[dict[str, object]] = []
+    for regime_i, regime in enumerate(regimes):
+        for realization in range(4):
+            base = {
+                method: rng.normal(
+                    loc=10.0 * regime_i + method_i,
+                    scale=0.8,
+                    size=len(descriptors),
+                )
+                for method_i, method in enumerate(methods)
+            }
+            for kind in ("original", "monotone"):
+                data: dict[str, np.ndarray] = {}
+                for method in methods:
+                    values = np.array(base[method], dtype=float, copy=True)
+                    if kind == "monotone" and method in {"NVG", "STN"}:
+                        values = values + 2.5
+                    data[method] = values
+                records.append(
+                    {
+                        "dataset_id": regime,
+                        "regime": regime,
+                        "realization": realization,
+                        "seed": realization,
+                        "transform": kind,
+                        "matrix": pd.DataFrame(data, index=list(descriptors)),
+                        "series_length": 32,
+                    }
+                )
+
+    audit = AuditConfig(
+        n_steps=64,
+        n_realizations=4,
+        seed=0,
+        n_folds=2,
+        profile="dev",
+        regimes=regimes,
+        methods=methods,
+        families={
+            "visibility": ("HVG", "NVG"),
+            "transition": ("OPN", "STN"),
+        },
+        variance_eps=1e-12,
+        figure_dpi=80,
+    )
+    config = InvarianceAuditConfig(audit=audit, transforms=("monotone",))
+    stability, ood = compute_invariance_metrics(records, config)
+    assert "per_family" in stability and "per_method" in stability
+    assert "visibility" in stability["per_family"]
+    for method in ("HVG", "OPN"):
+        assert stability["per_method"][method]["monotone"]["normalized_error_median"] == 0.0
+        for model_name in ("random_forest", "logistic"):
+            assert (
+                ood["per_method"][method]["monotone"][model_name]["delta_f1"] == 0.0
+            )
+    assert stability["per_method"]["NVG"]["monotone"]["normalized_error_median"] > 0.0
+    assert stability["per_method"]["STN"]["monotone"]["normalized_error_median"] > 0.0
+
+    out = tmp_path / "invariance"
+    data_dir = out / "data"
+    data_dir.mkdir(parents=True)
+    with (data_dir / "records.pkl").open("wb") as fh:
+        pickle.dump(records, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    sentinel = 123.456
+    payload = {
+        "generated_at_utc": "2026-01-01T00:00:00+00:00",
+        "descriptor_stability": {
+            "per_family": {
+                "visibility": {
+                    "monotone": {
+                        "normalized_error_median": sentinel,
+                        "spearman_mean": 0.5,
+                        "n_features": 1,
+                    }
+                }
+            }
+        },
+        "classification_ood": {
+            "per_family": {
+                "visibility": {
+                    "monotone": {
+                        "random_forest": {
+                            "f1_clean": 0.5,
+                            "f1_perturbed": 0.4,
+                            "delta_f1": -0.1,
+                        }
+                    }
+                }
+            }
+        },
+        "figures": [],
+    }
+    (out / "invariance_metrics.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    InvarianceAuditPipeline(config, lang="en").plot_only(out, lang="en")
+
+    saved = json.loads((out / "invariance_metrics.json").read_text(encoding="utf-8"))
+    assert (
+        saved["descriptor_stability"]["per_family"]["visibility"]["monotone"][
+            "normalized_error_median"
+        ]
+        == sentinel
+    )
+    assert "per_method" in saved["descriptor_stability"]
+    assert "per_method" in saved["classification_ood"]
+    alias = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert alias["descriptor_stability"]["per_method"]["HVG"]["monotone"][
+        "normalized_error_median"
+    ] == 0.0
+
+    tables = data_dir / "tables"
+    stability_csv = pd.read_csv(tables / "stability_matrix_by_method.csv")
+    delta_csv = pd.read_csv(tables / "delta_f1_by_method.csv")
+    assert list(stability_csv.columns) == [
+        "method",
+        "family",
+        "transform",
+        "normalized_error_median",
+        "spearman_mean",
+        "n_features",
+    ]
+    assert list(delta_csv.columns) == [
+        "method",
+        "family",
+        "transform",
+        "model",
+        "f1_clean",
+        "f1_perturbed",
+        "delta_f1",
+    ]
+    for method, family in (("HVG", "visibility"), ("OPN", "transition")):
+        stab_row = stability_csv.loc[stability_csv["method"] == method].iloc[0]
+        assert stab_row["family"] == family
+        assert stab_row["transform"] == "monotone"
+        assert stab_row["normalized_error_median"] == 0.0
+        for model_name in ("random_forest", "logistic"):
+            delta_row = delta_csv.loc[
+                (delta_csv["method"] == method) & (delta_csv["model"] == model_name)
+            ].iloc[0]
+            assert delta_row["delta_f1"] == 0.0
+
+    figure = out / "figures" / "02_invariance_matrix_by_method.png"
+    assert figure.exists()
+    assert figure.with_suffix(".pdf").exists()
+    assert figure.with_suffix(".svg").exists()
+
+
+def test_disconnection_by_family_and_csv(tmp_path: Path) -> None:
+    """Family rate is the row-wise ANY over that family's ``lambda2_g`` columns.
+
+    Legacy ``nan_inf_rate`` / ``spectral_nan_rate`` / ``disconnection_proxy_rate``
+    stay in the payload, and ``plot_only`` writes ``disconnection_by_family.csv``.
+    """
+    columns = [
+        "visibility__NVG__lambda2_g",
+        "visibility__HVG__lambda2_g",
+        "transition__STN__lambda2_g",
+        "transition__OPN__lambda2_g",
+        "proximity__RN__lambda2_g",
+        "proximity__kNN__lambda2_g",
+        "similarity__Correlation__lambda2_g",
+        "similarity__Segment__lambda2_g",
+        "visibility__NVG__c_avg",
+    ]
+    values = np.array(
+        [
+            [0.2, 0.2, 1.0, 1.0, 0.0, 0.5, 0.4, 0.4, 1.0],
+            [0.2, 0.0, 1.0, 1.0, 0.0, 0.5, 0.4, 0.4, 1.0],
+            [0.2, 0.2, 1.0, 1.0, 0.0, 0.5, np.inf, 0.4, 1.0],
+            [0.2, 1e-13, np.nan, 1.0, 0.0, 0.5, 0.4, 1e-12, np.nan],
+        ],
+        dtype=float,
+    )
+    failure = _nan_failure_rate(pd.DataFrame(values, columns=columns))
+    assert failure["nan_inf_rate"] == pytest.approx(3 / 36)
+    assert failure["spectral_nan_rate"] == pytest.approx(2 / 32)
+    assert failure["disconnection_proxy_rate"] == pytest.approx(1.0)
+    assert failure["disconnection_by_family"] == {
+        "visibility": pytest.approx(0.5),
+        "transition": pytest.approx(0.25),
+        "proximity": pytest.approx(1.0),
+        "similarity": pytest.approx(0.5),
+    }
+    assert failure["disconnection_by_method"]["NVG"] == pytest.approx(0.0)
+    assert failure["disconnection_by_method"]["HVG"] == pytest.approx(0.5)
+    assert failure["disconnection_by_method"]["STN"] == pytest.approx(0.25)
+    assert failure["disconnection_by_method"]["OPN"] == pytest.approx(0.0)
+    assert failure["disconnection_by_method"]["RN"] == pytest.approx(1.0)
+    assert failure["disconnection_by_method"]["kNN"] == pytest.approx(0.0)
+    assert failure["disconnection_by_method"]["Correlation"] == pytest.approx(0.25)
+    assert failure["disconnection_by_method"]["Segment"] == pytest.approx(0.25)
+    assert failure["lambda2_median_by_family"]["visibility"] == pytest.approx(0.2)
+    assert failure["lambda2_median_by_family"]["transition"] == pytest.approx(1.0)
+    assert failure["lambda2_median_by_family"]["proximity"] == pytest.approx(0.25)
+    assert failure["lambda2_median_by_family"]["similarity"] == pytest.approx(0.4)
+
+    cfg = PhaseMapsAuditConfig(
+        audit=AuditConfig(n_steps=32, n_realizations=1, seed=1, profile="dev"),
+        n_grid=(100,),
+        snr_db_grid=(None,),
+    )
+    out = tmp_path / "phase_maps"
+    out.mkdir()
+    payload = {
+        "generated_at_utc": "2026-01-01T00:00:00+00:00",
+        "cells": {"100": {"inf": {"views": {}, "failure_modes": failure}}},
+        "figures": [],
+    }
+    (out / "phase_maps_metrics.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    PhaseMapsAuditPipeline(cfg, lang="en").plot_only(out, lang="en")
+
+    table = pd.read_csv(out / "data" / "tables" / "disconnection_by_family.csv")
+    assert list(table.columns) == [
+        "N",
+        "SNR",
+        "disconnection_proxy_rate",
+        "visibility_disc_rate",
+        "transition_disc_rate",
+        "proximity_disc_rate",
+        "similarity_disc_rate",
+        "visibility_lambda2_med",
+        "transition_lambda2_med",
+        "proximity_lambda2_med",
+        "similarity_lambda2_med",
+    ]
+    row = table.iloc[0]
+    assert int(row["N"]) == 100
+    raw_line = (out / "data" / "tables" / "disconnection_by_family.csv").read_text(
+        encoding="utf-8"
+    ).splitlines()[1]
+    assert raw_line.startswith("100,inf,")
+    assert np.isinf(float(row["SNR"]))
+    assert row["visibility_disc_rate"] == pytest.approx(0.5)
+    assert row["transition_disc_rate"] == pytest.approx(0.25)
+    assert row["proximity_disc_rate"] == pytest.approx(1.0)
+    assert row["similarity_disc_rate"] == pytest.approx(0.5)
+    assert row["disconnection_proxy_rate"] == pytest.approx(1.0)
+    assert row["proximity_lambda2_med"] == pytest.approx(0.25)
+    figure = out / "figures" / "03_disconnection_by_family_phase_map.png"
+    assert figure.exists()
+    assert figure.with_suffix(".pdf").exists()
+    assert figure.with_suffix(".svg").exists()
 
 
 def test_phase_maps_result_metrics_dict() -> None:

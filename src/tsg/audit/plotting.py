@@ -44,6 +44,13 @@ def _save(fig: plt.Figure, path: Path, dpi: int) -> Path:
     return png
 
 
+def _text_color_from_rgba(rgba: tuple[float, ...] | list[float]) -> str:
+    """Pick black/white cell text from perceived luminance of an RGBA tuple."""
+    r, g, b = float(rgba[0]), float(rgba[1]), float(rgba[2])
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "white" if luminance < 0.50 else "black"
+
+
 def _confidence_ellipse(ax, x, y, color, n_std: float = 2.0) -> None:
     if len(x) < 3:
         return
@@ -509,6 +516,126 @@ def plot_feature_importance(
     return _save(fig, output_dir / "06_feature_importance_top15.png", config.figure_dpi)
 
 
+_FAMILY_VIEWS = ("visibility", "transition", "proximity", "similarity", "full")
+
+
+def _short_pair_label(pair: str) -> str:
+    """Compact critical-pair label for heatmap axes."""
+    return pair.replace("__", " ↔ ")
+
+
+def plot_critical_pairs_family_analysis(
+    classification: ClassificationResult,
+    geometry: GeometryResult,
+    config: AuditConfig,
+    output_dir: Path,
+    *,
+    lang: str = "en",
+) -> Path:
+    """Two-panel heatmaps: logistic confusion vs pair silhouette by family view."""
+    pairs = [f"{a}__{b}" for a, b in config.critical_pairs]
+    details = classification.critical_pair_details
+    geo = geometry.critical_pair_geometry_by_view
+
+    conf_logistic = np.full((len(pairs), len(_FAMILY_VIEWS)), np.nan, dtype=float)
+    conf_rf = np.full((len(pairs), len(_FAMILY_VIEWS)), np.nan, dtype=float)
+    sil = np.full((len(pairs), len(_FAMILY_VIEWS)), np.nan, dtype=float)
+    fisher = np.full((len(pairs), len(_FAMILY_VIEWS)), np.nan, dtype=float)
+
+    for i, pair in enumerate(pairs):
+        for j, view in enumerate(_FAMILY_VIEWS):
+            by_model = details.get(pair, {}).get(view, {})
+            if "logistic" in by_model:
+                conf_logistic[i, j] = float(by_model["logistic"].get("confusion_rate", np.nan))
+            if "random_forest" in by_model:
+                conf_rf[i, j] = float(
+                    by_model["random_forest"].get("confusion_rate", np.nan)
+                )
+            g = geo.get(view, {}).get(pair, {})
+            sil[i, j] = float(g.get("pair_silhouette", np.nan))
+            fisher[i, j] = float(g.get("fisher_ratio", np.nan))
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.55 * len(pairs) + 2.5)))
+    pair_labels = [_short_pair_label(p) for p in pairs]
+
+    # Panel A — confusion rates (%); annotate RF when > 0.
+    ax0 = axes[0]
+    conf_pct = conf_logistic * 100.0
+    im0 = ax0.imshow(conf_pct, aspect="auto", cmap="YlOrRd", vmin=0.0, vmax=50.0)
+    ax0.set_xticks(range(len(_FAMILY_VIEWS)))
+    ax0.set_xticklabels(list(_FAMILY_VIEWS), rotation=30, ha="right")
+    ax0.set_yticks(range(len(pairs)))
+    ax0.set_yticklabels(pair_labels, fontsize=8)
+    ax0.set_xlabel(t("critical_pairs_family_xlabel", lang))
+    ax0.set_ylabel(t("critical_pairs_family_ylabel", lang))
+    ax0.set_title(t("critical_pairs_family_panel_a", lang), fontsize=10)
+    for i in range(len(pairs)):
+        for j in range(len(_FAMILY_VIEWS)):
+            val = conf_pct[i, j]
+            if np.isnan(val):
+                text = "—"
+            else:
+                rf_val = conf_rf[i, j]
+                if not np.isnan(rf_val) and rf_val > 0:
+                    text = f"{val:.1f}\n({rf_val * 100.0:.1f})"
+                else:
+                    text = f"{val:.1f}"
+            ax0.text(
+                j,
+                i,
+                text,
+                ha="center",
+                va="center",
+                fontsize=7,
+                color="black" if (np.isnan(val) or val < 25) else "white",
+            )
+    fig.colorbar(im0, ax=ax0, fraction=0.046, pad=0.04, label="%")
+
+    # Panel B — pair silhouette with Fisher ratio annotation.
+    ax1 = axes[1]
+    im1 = ax1.imshow(sil, aspect="auto", cmap="RdYlGn", vmin=-0.2, vmax=1.0)
+    ax1.set_xticks(range(len(_FAMILY_VIEWS)))
+    ax1.set_xticklabels(list(_FAMILY_VIEWS), rotation=30, ha="right")
+    ax1.set_yticks(range(len(pairs)))
+    ax1.set_yticklabels(pair_labels, fontsize=8)
+    ax1.set_xlabel(t("critical_pairs_family_xlabel", lang))
+    ax1.set_title(t("critical_pairs_family_panel_b", lang), fontsize=10)
+    for i in range(len(pairs)):
+        for j in range(len(_FAMILY_VIEWS)):
+            s_val = sil[i, j]
+            f_val = fisher[i, j]
+            if np.isnan(s_val):
+                text = "—"
+                text_color = "black"
+            else:
+                if np.isnan(f_val):
+                    text = f"{s_val:.2f}"
+                elif np.isinf(f_val):
+                    text = f"{s_val:.2f}\n(∞)"
+                else:
+                    text = f"{s_val:.2f}\n({f_val:.1f})"
+                rgba = im1.cmap(im1.norm(float(s_val)))
+                text_color = _text_color_from_rgba(rgba)
+            ax1.text(
+                j,
+                i,
+                text,
+                ha="center",
+                va="center",
+                fontsize=7,
+                color=text_color,
+            )
+    fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label="silhouette")
+
+    fig.suptitle(t("critical_pairs_family_suptitle", lang), fontsize=11)
+    fig.tight_layout()
+    return _save(
+        fig,
+        output_dir / "07_critical_pairs_family_analysis.png",
+        config.figure_dpi,
+    )
+
+
 def generate_all_figures(
     *,
     records: list[dict],
@@ -525,5 +652,8 @@ def generate_all_figures(
         plot_family_ablation(classification, geometry, config, output_dir, lang=lang),
         plot_critical_pairs_boxplots(records, config, output_dir, lang=lang),
         plot_feature_importance(classification, config, output_dir, lang=lang),
+        plot_critical_pairs_family_analysis(
+            classification, geometry, config, output_dir, lang=lang
+        ),
     ]
     return paths

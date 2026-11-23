@@ -36,6 +36,46 @@ from tsg.descriptors.config import DescriptorConfig
 
 logger = logging.getLogger(__name__)
 
+_CLASSIFICATION_PAIR_COLS = (
+    "confusion_rate",
+    "confusion_a_to_b",
+    "confusion_b_to_a",
+    "pair_macro_f1",
+    "mean_prob_margin",
+)
+_GEOMETRY_PAIR_COLS = (
+    "pair_silhouette",
+    "centroid_euclidean_norm",
+    "centroid_cosine",
+    "fisher_ratio",
+    "n_features",
+)
+
+
+def build_critical_pairs_by_family_frame(
+    classification: ClassificationResult,
+    geometry: GeometryResult,
+) -> pd.DataFrame:
+    """Join classification + geometry critical-pair metrics by ``(pair, view, model)``."""
+    rows: list[dict[str, Any]] = []
+    details = classification.critical_pair_details
+    geo = geometry.critical_pair_geometry_by_view
+    for pair, by_view in details.items():
+        for view, by_model in by_view.items():
+            geo_metrics = geo.get(view, {}).get(pair, {})
+            for model, clf_metrics in by_model.items():
+                row: dict[str, Any] = {"pair": pair, "view": view, "model": model}
+                for col in _CLASSIFICATION_PAIR_COLS:
+                    row[col] = clf_metrics.get(col, float("nan"))
+                for col in _GEOMETRY_PAIR_COLS:
+                    row[col] = geo_metrics.get(col, float("nan"))
+                rows.append(row)
+    if not rows:
+        cols = ["pair", "view", "model", *_CLASSIFICATION_PAIR_COLS, *_GEOMETRY_PAIR_COLS]
+        return pd.DataFrame(columns=cols)
+    frame = pd.DataFrame(rows)
+    return frame.sort_values(["pair", "view", "model"]).reset_index(drop=True)
+
 
 @dataclass
 class AuditResult:
@@ -58,6 +98,9 @@ class AuditResult:
         health = self.health.to_dict()
         n_raw = int(health["n_features_raw"])
         n_clean = int(health["n_features_clean"])
+        family_frame = build_critical_pairs_by_family_frame(
+            self.classification, self.geometry
+        )
         return {
             "generated_at_utc": self.generated_at_utc,
             "n_features_raw": n_raw,
@@ -86,6 +129,7 @@ class AuditResult:
             "geometry": self.geometry.to_dict(),
             "classification": self.classification.to_dict(),
             "verdict": self.verdict.to_dict(),
+            "critical_pairs_by_family": family_frame.to_dict(orient="records"),
             "figures": [str(p) for p in self.figure_paths],
         }
 
@@ -271,6 +315,18 @@ class AuditPipeline:
             output_dir=fig_dir,
             lang=use_lang,
         )
+        tables_dir = data_dir / "tables"
+        tables_dir.mkdir(parents=True, exist_ok=True)
+        family_frame = build_critical_pairs_by_family_frame(
+            result.classification, result.geometry
+        )
+        if not family_frame.empty:
+            save_table_csv(tables_dir / "critical_pairs_by_family.csv", family_frame)
+        # Refresh classification/geometry blocks so new pair metrics land in JSON.
+        payload["geometry"] = result.geometry.to_dict()
+        payload["classification"] = result.classification.to_dict()
+        payload["verdict"] = result.verdict.to_dict()
+        payload["critical_pairs_by_family"] = family_frame.to_dict(orient="records")
         payload["figures"] = [str(p) for p in result.figure_paths]
         payload["lang"] = use_lang
         atomic_write_text(
@@ -349,3 +405,8 @@ class AuditPipeline:
                     [{"pair": k, "confusion_rate": v} for k, v in crit.items()]
                 ),
             )
+        family_frame = build_critical_pairs_by_family_frame(
+            result.classification, result.geometry
+        )
+        if not family_frame.empty:
+            save_table_csv(tables_dir / "critical_pairs_by_family.csv", family_frame)

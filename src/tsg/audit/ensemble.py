@@ -8,7 +8,7 @@ import logging
 import pickle
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -162,8 +162,16 @@ def generate_one_matrix(
     generator_config: GeneratorSuiteConfig | None = None,
     ts2g_config: TS2GSuiteConfig | None = None,
     descriptor_config: DescriptorConfig | None = None,
+    values_transform: Callable[[NDArray[np.floating]], NDArray[np.floating]] | None = None,
 ) -> dict[str, Any]:
-    """Generate one series, map with all TS2G methods and return D matrix."""
+    """Generate one series, map with all TS2G methods and return D matrix.
+
+    Parameters
+    ----------
+    values_transform
+        Optional map applied to the **raw** series *before* any TS2G method
+        sees it (used by the RQ1 stress suite for SNR noise / truncation).
+    """
     gen_cfg = generator_config or load_generator_suite_config()
     # Align series length with the audit run; keep chaotic burn-in defaults from YAML.
     gen_cfg = replace(
@@ -178,7 +186,14 @@ def generate_one_matrix(
 
     generator = build_generator(dataset_id, gen_cfg)
     series = generator.generate(audit_config.n_steps, seed=seed)
-    values = series.values
+    values = np.asarray(series.values, dtype=float).ravel()
+    if values_transform is not None:
+        values = np.asarray(values_transform(values), dtype=float).ravel()
+        if values.size < 8:
+            raise ValueError(
+                f"Transformed series too short for TS2G (n={values.size}) "
+                f"dataset={dataset_id} seed={seed}"
+            )
 
     ts2g_cfg = ts2g_config or TS2GSuiteConfig(methods=audit_config.methods)
     transformers = {

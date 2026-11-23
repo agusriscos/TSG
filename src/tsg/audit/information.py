@@ -85,9 +85,9 @@ MODEL_LABELS: dict[str, str] = {
     "random_forest": "Random Forest",
     "logistic": "Logística L2",
 }
-# Stochastic paths, continuous chaotic flows, and discrete chaotic maps.
-# Quasiperiodic and regime-switching series stay in the global / per-regime
-# estimates but are not part of this three-way split.
+# Exhaustive partition of the 12-regime panel (360 series when R=30).
+# ``structured_other`` holds quasiperiodic and regime-switching so every
+# realization belongs to exactly one macro-group.
 DYNAMIC_GROUPS: dict[str, tuple[str, ...]] = {
     "stochastic": (
         "white_noise",
@@ -98,11 +98,13 @@ DYNAMIC_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "chaotic_flows": ("lorenz", "rossler"),
     "discrete_maps": ("henon", "logistic_weak", "logistic"),
+    "structured_other": ("quasiperiodic", "regime_switching"),
 }
 GROUP_LABELS: dict[str, str] = {
     "stochastic": "estocásticos",
     "chaotic_flows": "flujos caóticos",
     "discrete_maps": "mapas discretos",
+    "structured_other": "estructurados / conmutados",
 }
 GAUSSIAN_RIDGE = 1e-3
 

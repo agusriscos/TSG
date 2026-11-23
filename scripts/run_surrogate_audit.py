@@ -59,7 +59,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plot-only",
         action="store_true",
-        help="Regenerate figures from saved artifacts without recomputing graphs.",
+        help=(
+            "Regenerate figures from saved metrics and build the dHVG "
+            "irreversibility table. Rebuilds only dHVG when kl_inout is absent "
+            "from records.pkl; does not rerun the 9-method pipeline."
+        ),
     )
     return parser.parse_args()
 

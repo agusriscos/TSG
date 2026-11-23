@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import time
+import warnings
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from scipy.stats import rankdata, wilcoxon
 from sklearn.base import clone
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
@@ -43,12 +46,14 @@ from tsg.audit.ensemble import (
 from tsg.audit.features import (
     all_feature_names,
     family_feature_mask,
+    feature_name,
     matrix_to_feature_row,
 )
 from tsg.audit.health import diagnose_and_clean
 from tsg.audit.i18n import t as _t
 from tsg.descriptors.base import DESCRIPTOR_IDS
 from tsg.descriptors.config import DescriptorConfig
+from tsg.descriptors.directional import temporal_irreversibility_kl
 from tsg.descriptors.pipeline import DescriptorPipeline, results_to_matrix
 from tsg.generators.config import GeneratorSuiteConfig
 from tsg.generators.registry import REGIME_LABELS, build_generator
@@ -61,6 +66,7 @@ from tsg.generators.surrogates import (
     make_surrogate,
 )
 from tsg.graphs.config import TS2GSuiteConfig
+from tsg.graphs.geometry import DHVGTransformer
 from tsg.graphs.registry import build_transformers
 
 logger = logging.getLogger(__name__)
@@ -125,6 +131,8 @@ class SurrogateAuditResult:
     generated_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    dhvg_irreversibility: pd.DataFrame | None = None
+    dhvg_vs_hvg_auroc: pd.DataFrame | None = None
 
     def metrics_dict(self) -> dict[str, Any]:
         audit = self.config.audit
@@ -148,8 +156,17 @@ class SurrogateAuditResult:
             "nonlinearity_binary_original_vs_iaaft": self.nonlinearity_binary,
             "nonlinearity_multiclass_surrogate_type": self.nonlinearity_multiclass,
             "regime_multiclass_by_surrogate": self.regime_multiclass_by_surrogate,
+            "dhvg_irreversibility": _frame_records(self.dhvg_irreversibility),
+            "dhvg_vs_hvg_auroc": _frame_records(self.dhvg_vs_hvg_auroc),
             "figures": [str(p) for p in self.figure_paths],
         }
+
+
+def _frame_records(frame: pd.DataFrame | None) -> list[dict[str, Any]] | None:
+    """JSON-ready records for a table, or ``None`` when the table was not built."""
+    if frame is None:
+        return None
+    return frame.to_dict(orient="records")
 
 
 def _surrogate_seed(base_seed: int, kind: str, realization: int) -> int:
@@ -360,6 +377,34 @@ def _view_specs(columns: Sequence[str]) -> list[tuple[str, np.ndarray]]:
     return [(name, mask) for name, mask in specs if mask.any()]
 
 
+def _finite_diff(a: float, b: float) -> float:
+    """Return ``a - b`` when both are finite, else NaN."""
+    if np.isfinite(a) and np.isfinite(b):
+        return float(a - b)
+    return float("nan")
+
+
+def _temporal_row(
+    *,
+    f1_orig: float,
+    f1_shuf: float,
+    f1_ft: float,
+    f1_iaaft: float,
+) -> dict[str, float]:
+    """Additive Δ_T decomposition for one (family, model) cell."""
+    return {
+        "macro_f1_original": float(f1_orig),
+        "macro_f1_shuffled": float(f1_shuf),
+        "macro_f1_ft": float(f1_ft),
+        "macro_f1_iaaft": float(f1_iaaft),
+        "delta_T": _finite_diff(f1_orig, f1_shuf),
+        "delta_marginal": float(f1_shuf),
+        "delta_linear": _finite_diff(f1_ft, f1_shuf),
+        "delta_iaaft_minus_ft": _finite_diff(f1_iaaft, f1_ft),
+        "delta_nonlinear": _finite_diff(f1_orig, f1_iaaft),
+    }
+
+
 def _evaluate_family_views(
     x: pd.DataFrame,
     y: pd.Series,
@@ -481,7 +526,17 @@ def compute_surrogate_metrics(
             labels=audit.regimes,
         )
 
-    temporal: dict[str, Any] = {"per_family": {}, "definition": "F1(original) - F1(shuffled)"}
+    temporal: dict[str, Any] = {
+        "per_family": {},
+        "definition": "F1(original) - F1(shuffled)",
+        "decomposition": (
+            "delta_marginal = F1(shuffled); "
+            "delta_linear = F1(ft) - F1(shuffled); "
+            "delta_iaaft_minus_ft = F1(iaaft) - F1(ft); "
+            "delta_nonlinear = F1(original) - F1(iaaft); "
+            "F1(original) = sum of the four terms"
+        ),
+    }
     for family in FAMILY_VIEWS:
         temporal["per_family"][family] = {}
         for model in ("random_forest", "logistic"):
@@ -497,13 +552,24 @@ def compute_surrogate_metrics(
                 .get(model, {})
                 .get("macro_f1_mean", float("nan"))
             )
-            temporal["per_family"][family][model] = {
-                "macro_f1_original": f1_orig,
-                "macro_f1_shuffled": f1_shuf,
-                "delta_T": float(f1_orig - f1_shuf)
-                if np.isfinite(f1_orig) and np.isfinite(f1_shuf)
-                else float("nan"),
-            }
+            f1_ft = (
+                regime_by_surr.get("ft", {})
+                .get(family, {})
+                .get(model, {})
+                .get("macro_f1_mean", float("nan"))
+            )
+            f1_iaaft = (
+                regime_by_surr.get("iaaft", {})
+                .get(family, {})
+                .get(model, {})
+                .get("macro_f1_mean", float("nan"))
+            )
+            temporal["per_family"][family][model] = _temporal_row(
+                f1_orig=f1_orig,
+                f1_shuf=f1_shuf,
+                f1_ft=f1_ft,
+                f1_iaaft=f1_iaaft,
+            )
 
     # --- Multiclass: classify surrogate kind (original/shuffled/ft/iaaft) ---
     x_all, y_kind = _records_to_xy(records, audit.methods, label_key="surrogate_kind")
@@ -621,7 +687,104 @@ def _plot_summary_figure(
     fig2.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig2.tight_layout()
     paths.extend(save_figure_trio(fig2, output_dir / "surrogate_binary_auroc"))
+    paths.extend(_plot_delta_t_decomposition(result, output_dir, lang=lang))
     return paths
+
+
+def _plot_delta_t_decomposition(
+    result: SurrogateAuditResult,
+    output_dir: Path,
+    *,
+    lang: str = "en",
+) -> list[Path]:
+    """Stacked bars of the additive Macro-F1 decomposition by family."""
+    del lang  # titles are equation-based; kept for API symmetry with other plots
+    families = list(FAMILY_VIEWS)
+    components = (
+        ("delta_marginal", "#9e9e9e", r"$F1_{\mathrm{shuf}}$ (marginal)"),
+        ("delta_linear", "#3d7ea6", r"$\Delta_{\mathrm{lin}}=F1_{\mathrm{ft}}-F1_{\mathrm{shuf}}$"),
+        (
+            "delta_iaaft_minus_ft",
+            "#9a6b00",
+            r"$\Delta_{\mathrm{IAAFT-FT}}=F1_{\mathrm{iaaft}}-F1_{\mathrm{ft}}$",
+        ),
+        (
+            "delta_nonlinear",
+            "#8b2e1a",
+            r"$\Delta_{\mathrm{NL}}=F1_{\mathrm{orig}}-F1_{\mathrm{iaaft}}$",
+        ),
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.6), sharey=True)
+    x = np.arange(len(families))
+    width = 0.62
+    for ax, model, title in zip(
+        axes,
+        ("random_forest", "logistic"),
+        ("Random Forest", "Logistic L2"),
+        strict=True,
+    ):
+        bottoms = np.zeros(len(families), dtype=float)
+        for key, color, label in components:
+            heights = np.array(
+                [
+                    float(
+                        result.temporal_sensitivity["per_family"]
+                        .get(fam, {})
+                        .get(model, {})
+                        .get(key, float("nan"))
+                    )
+                    for fam in families
+                ],
+                dtype=float,
+            )
+            heights = np.nan_to_num(heights, nan=0.0)
+            ax.bar(
+                x,
+                heights,
+                width=width,
+                bottom=bottoms,
+                color=color,
+                edgecolor="#333333",
+                linewidth=0.35,
+                label=label,
+            )
+            bottoms = bottoms + heights
+        f1_orig = np.array(
+            [
+                float(
+                    result.temporal_sensitivity["per_family"]
+                    .get(fam, {})
+                    .get(model, {})
+                    .get("macro_f1_original", float("nan"))
+                )
+                for fam in families
+            ],
+            dtype=float,
+        )
+        ax.scatter(
+            x,
+            f1_orig,
+            marker="D",
+            s=28,
+            color="#111111",
+            zorder=5,
+            label=r"$F1_{\mathrm{orig}}$",
+        )
+        ax.set_xticks(x, families, rotation=20, ha="right")
+        ax.set_title(title)
+        ax.set_ylim(0.0, 1.08)
+        ax.yaxis.grid(True, linestyle=":", alpha=0.5)
+        ax.set_axisbelow(True)
+    axes[0].set_ylabel("Macro-F1 (additive stack)")
+    axes[1].legend(frameon=False, fontsize=7.5, loc="upper right")
+    fig.suptitle(
+        r"Additive $\Delta_T$ decomposition "
+        r"($F1_{\mathrm{orig}}=F1_{\mathrm{shuf}}+\Delta_{\mathrm{lin}}"
+        r"+\Delta_{\mathrm{IAAFT-FT}}+\Delta_{\mathrm{NL}}$)",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    return list(save_figure_trio(fig, output_dir / "delta_T_decomposition"))
 
 
 def _format_markdown(result: SurrogateAuditResult) -> str:
@@ -697,6 +860,7 @@ def _format_markdown(result: SurrogateAuditResult) -> str:
             cells.append(f"{auroc:.3f}")
         lines.append(f"| {regime} | " + " | ".join(cells) + " |")
 
+    _append_dhvg_markdown(lines, result)
     lines.extend(["", "## Figuras", ""])
     for p in result.figure_paths:
         lines.append(f"- `{p.name}`")
@@ -777,6 +941,15 @@ class SurrogateAuditPipeline:
         # --- figures ---
         fig_dir = output_dir / "figures"
         result.figure_paths = _plot_summary_figure(result, fig_dir, lang=self.lang)
+        result.figure_paths.extend(
+            write_dhvg_irreversibility_artifacts(
+                result,
+                result.records,
+                output_dir,
+                lang=self.lang,
+                n_workers=self.n_workers,
+            )
+        )
 
         # --- JSON / reports ---
         metrics_path = output_dir / "surrogate_metrics.json"
@@ -808,7 +981,10 @@ class SurrogateAuditPipeline:
         *,
         lang: str | None = None,
     ) -> SurrogateAuditResult:
-        """Regenerate figures from persisted records without recomputing graphs.
+        """Regenerate figures and the dHVG irreversibility table.
+
+        Saved Δ_T / AUROC blocks are reused when present. ``kl_inout`` is read
+        from the matrices when available; otherwise only dHVG is rebuilt.
 
         Parameters
         ----------
@@ -829,18 +1005,28 @@ class SurrogateAuditPipeline:
             metrics_path = out / "metrics.json"
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
 
-        records_path = data_dir / "records.pkl"
-        if not records_path.exists():
-            raise FileNotFoundError(
-                f"Missing {records_path}; cannot regenerate figures"
-            )
-        with records_path.open("rb") as fh:
-            records = pickle.load(fh)
-
-        temporal, binary, multiclass, regime_by_surr = compute_surrogate_metrics(
-            records, self.config
-        )
         use_lang = lang or payload.get("lang") or self.lang
+        temporal = payload.get("temporal_sensitivity_delta_T")
+        binary = payload.get("nonlinearity_binary_original_vs_iaaft")
+        multiclass = payload.get("nonlinearity_multiclass_surrogate_type")
+        regime_by_surr = payload.get("regime_multiclass_by_surrogate")
+        records: list[dict[str, Any]] = []
+        persisted = (temporal, binary, multiclass, regime_by_surr)
+        if all(isinstance(block, dict) for block in persisted):
+            logger.info(
+                "Plot-only surrogate figures from persisted metrics (no recompute)"
+            )
+        else:
+            records_path = data_dir / "records.pkl"
+            if not records_path.exists():
+                raise FileNotFoundError(
+                    f"Missing {records_path}; cannot regenerate figures"
+                )
+            with records_path.open("rb") as fh:
+                records = pickle.load(fh)
+            temporal, binary, multiclass, regime_by_surr = compute_surrogate_metrics(
+                records, self.config
+            )
         result = SurrogateAuditResult(
             config=self.config,
             records=records,
@@ -854,13 +1040,40 @@ class SurrogateAuditPipeline:
         )
         fig_dir = out / "figures"
         result.figure_paths = _plot_summary_figure(result, fig_dir, lang=use_lang)
+        records_path = data_dir / "records.pkl"
+        irr_records = records
+        if records_path.exists():
+            with records_path.open("rb") as fh:
+                irr_records = pickle.load(fh)
+        result.figure_paths.extend(
+            write_dhvg_irreversibility_artifacts(
+                result,
+                irr_records,
+                out,
+                lang=use_lang,
+                n_workers=self.n_workers,
+            )
+        )
         payload["figures"] = [str(p) for p in result.figure_paths]
         payload["lang"] = use_lang
+        payload["dhvg_irreversibility_table"] = str(
+            data_dir / "tables" / "dhvg_irreversibility.csv"
+        )
+        payload["dhvg_vs_hvg_auroc_table"] = str(
+            data_dir / "tables" / "dhvg_vs_hvg_auroc.csv"
+        )
+        payload["dhvg_irreversibility"] = _frame_records(result.dhvg_irreversibility)
+        payload["dhvg_vs_hvg_auroc"] = _frame_records(result.dhvg_vs_hvg_auroc)
         atomic_write_text(
             out / "surrogate_metrics.json",
             json.dumps(payload, indent=2, default=str),
         )
         write_metrics_alias(out, out / "surrogate_metrics.json")
+        md_path = out / "surrogate_report.md"
+        atomic_write_text(md_path, _format_markdown(result))
+        html = _markdown_tables_to_html(result)
+        atomic_write_text(out / "latest.html", html)
+        atomic_write_text(out / "surrogate_report.html", html)
         logger.info("Plot-only figures regenerated in %s (lang=%s)", out, use_lang)
         return result
 
@@ -922,6 +1135,7 @@ class SurrogateAuditPipeline:
 
         # CSV tables
         delta_rows = []
+        decomposed_rows = []
         for fam in FAMILY_VIEWS:
             block = result.temporal_sensitivity["per_family"].get(fam, {})
             for model_name in ("random_forest", "logistic"):
@@ -933,7 +1147,26 @@ class SurrogateAuditPipeline:
                     "macro_f1_shuffled": m.get("macro_f1_shuffled", float("nan")),
                     "delta_T": m.get("delta_T", float("nan")),
                 })
+                decomposed_rows.append({
+                    "family": fam,
+                    "model": model_name,
+                    "macro_f1_original": m.get("macro_f1_original", float("nan")),
+                    "macro_f1_shuffled": m.get("macro_f1_shuffled", float("nan")),
+                    "macro_f1_ft": m.get("macro_f1_ft", float("nan")),
+                    "macro_f1_iaaft": m.get("macro_f1_iaaft", float("nan")),
+                    "delta_T": m.get("delta_T", float("nan")),
+                    "delta_marginal": m.get("delta_marginal", float("nan")),
+                    "delta_linear": m.get("delta_linear", float("nan")),
+                    "delta_iaaft_minus_ft": m.get(
+                        "delta_iaaft_minus_ft", float("nan")
+                    ),
+                    "delta_nonlinear": m.get("delta_nonlinear", float("nan")),
+                })
         save_table_csv(tables_dir / "delta_T.csv", pd.DataFrame(delta_rows))
+        save_table_csv(
+            tables_dir / "delta_T_decomposed.csv",
+            pd.DataFrame(decomposed_rows),
+        )
 
         auroc_rows = []
         for regime in audit.regimes:
@@ -999,3 +1232,822 @@ img.fig{{width:100%;margin:1rem 0;border:1px solid #ddd6c8;border-radius:8px}}
 <pre>{md}</pre>
 </body></html>
 """
+
+
+_DHVG_METRIC_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("dHVG__kl_inout", "kl_inout"),
+    ("dHVG__i_dir", "i_dir"),
+)
+_DHVG_CONTRASTS: tuple[str, ...] = ("shuffled", "ft", "iaaft")
+_DHVG_KIND_STYLE: tuple[tuple[str, str, str], ...] = (
+    ("original", "#1b3a4b", "original"),
+    ("shuffled", "#8d8d8d", "shuffled"),
+    ("ft", "#3d7ea6", "FT"),
+    ("iaaft", "#c47b2b", "IAAFT"),
+)
+_DHVG_LONG_COLUMNS: tuple[str, ...] = (
+    "dataset_id",
+    "regime",
+    "realization",
+    "surrogate_kind",
+    "i_dir",
+    "kl_inout",
+    "kl_source",
+)
+_ISOLATED_VISIBILITY_FAMILIES: tuple[str, ...] = (
+    "HVG",
+    "dHVG",
+    "dHVG_plus_kl",
+    "kl_inout_only",
+)
+
+
+def _sample_std(values: NDArray[np.floating]) -> float:
+    """Sample standard deviation (``ddof=1``); NaN when ``n < 2``."""
+    if values.size < 2:
+        return float("nan")
+    return float(np.std(values, ddof=1))
+
+
+def _fmt_num(value: object, spec: str = ".3f") -> str:
+    """Format a finite float, otherwise ``nan``."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "nan"
+    if not np.isfinite(number):
+        return "nan"
+    return format(number, spec)
+
+
+def _records_store_kl(records: Sequence[dict[str, Any]]) -> bool:
+    """True when every saved matrix already carries finite ``dHVG`` ``kl_inout``."""
+    if not records:
+        return False
+    for rec in records:
+        matrix = rec.get("matrix")
+        if matrix is None or "kl_inout" not in matrix.index or "dHVG" not in matrix.columns:
+            return False
+        value = float(matrix.loc["kl_inout", "dHVG"])
+        if not np.isfinite(value):
+            return False
+    return True
+
+
+def _paired_wilcoxon(
+    original: NDArray[np.floating],
+    surrogate: NDArray[np.floating],
+) -> dict[str, float | str | int]:
+    """Paired Wilcoxon signed-rank test of ``original`` against ``surrogate``.
+
+    Effect size is the matched-pairs rank-biserial correlation
+    ``(W+ − W−) / (W+ + W−)``. Positive values mean the original scores higher.
+    """
+    diff = np.asarray(original, dtype=float) - np.asarray(surrogate, dtype=float)
+    finite = np.isfinite(diff)
+    diff = diff[finite]
+    n_pairs = int(diff.size)
+    nonzero = diff[diff != 0.0]
+    n_eff = int(nonzero.size)
+    empty = {
+        "test": "wilcoxon_signed_rank",
+        "statistic": 0.0,
+        "p_value": 1.0,
+        "effect_size": 0.0,
+        "effect_size_name": "rank_biserial",
+        "n_pairs": n_pairs,
+    }
+    if n_eff == 0:
+        return empty
+    ranks = rankdata(np.abs(nonzero))
+    w_plus = float(ranks[nonzero > 0.0].sum())
+    w_minus = float(ranks[nonzero < 0.0].sum())
+    effect = (w_plus - w_minus) / (w_plus + w_minus)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            result = wilcoxon(
+                diff,
+                zero_method="wilcox",
+                alternative="two-sided",
+                method="auto",
+            )
+        p_value = float(result.pvalue)
+    except ValueError:
+        p_value = float("nan")
+    return {
+        "test": "wilcoxon_signed_rank",
+        "statistic": w_plus,
+        "p_value": p_value,
+        "effect_size": float(effect),
+        "effect_size_name": "rank_biserial",
+        "n_pairs": n_pairs,
+    }
+
+
+def _dhvg_kl_realization(
+    dataset_id: str,
+    realization: int,
+    seed: int,
+    kinds: tuple[str, ...],
+    series_length: int,
+    generator_config: GeneratorSuiteConfig,
+    n_steps: int,
+    iaaft_max_iter: int,
+    iaaft_min_iter: int,
+    iaaft_tol: float,
+) -> dict[str, Any]:
+    """Rebuild one realization and return ``kl_inout`` for each surrogate kind."""
+    generator = build_generator(dataset_id, generator_config)
+    series = generator.generate(n_steps, seed=seed)
+    values = np.asarray(series.values, dtype=float).ravel()
+    if int(values.size) != int(series_length):
+        raise RuntimeError(
+            f"Series length mismatch for {dataset_id} r={realization}: "
+            f"generated {values.size}, record says {series_length}"
+        )
+    transformer = DHVGTransformer()
+    kl_by_kind: dict[str, float] = {}
+    for kind in kinds:
+        rng = np.random.default_rng(_surrogate_seed(seed, kind, realization))
+        surrogate = make_surrogate(
+            values,
+            kind,
+            rng,
+            max_iter=iaaft_max_iter,
+            min_iter=iaaft_min_iter,
+            tol=iaaft_tol,
+        )
+        graph = transformer.transform(surrogate, dataset_id).graph
+        kl_by_kind[kind] = float(temporal_irreversibility_kl(graph))
+    return {
+        "dataset_id": dataset_id,
+        "realization": int(realization),
+        "kl": kl_by_kind,
+    }
+
+
+def _recompute_kl_map(
+    records: Sequence[dict[str, Any]],
+    config: SurrogateAuditConfig,
+    generator_config: GeneratorSuiteConfig | None,
+    n_workers: int,
+) -> dict[tuple[str, int, str], float]:
+    """Map ``(dataset_id, realization, kind)`` → ``kl_inout`` via dHVG only."""
+    audit = config.audit
+    base_cfg = generator_config or load_generator_suite_config()
+    gen_cfg = replace(
+        base_cfg,
+        global_params=replace(
+            base_cfg.global_params,
+            n_steps=audit.n_steps,
+            seed=audit.seed,
+            n_samples=1,
+        ),
+    )
+    grouped: dict[tuple[str, int], dict[str, Any]] = {}
+    for rec in records:
+        key = (str(rec["dataset_id"]), int(rec["realization"]))
+        slot = grouped.setdefault(
+            key,
+            {
+                "seed": int(rec.get("seed", realization_seed(audit.seed, key[0], key[1]))),
+                "series_length": int(rec["series_length"]),
+                "kinds": [],
+            },
+        )
+        slot["kinds"].append(str(rec["surrogate_kind"]))
+
+    tasks = [
+        (
+            dataset_id,
+            realization,
+            int(payload["seed"]),
+            tuple(payload["kinds"]),
+            int(payload["series_length"]),
+        )
+        for (dataset_id, realization), payload in grouped.items()
+    ]
+    n_workers = max(1, int(n_workers))
+    logger.info(
+        "dHVG kl_inout is not in records.pkl; recomputing dHVG only "
+        "for %d realizations with %d workers",
+        len(tasks),
+        n_workers,
+    )
+    t0 = time.perf_counter()
+    if n_workers > 1:
+        from joblib import Parallel, delayed
+
+        computed = Parallel(n_jobs=n_workers)(
+            delayed(_dhvg_kl_realization)(
+                dataset_id,
+                realization,
+                seed,
+                kinds,
+                series_length,
+                gen_cfg,
+                audit.n_steps,
+                config.iaaft_max_iter,
+                config.iaaft_min_iter,
+                config.iaaft_tol,
+            )
+            for dataset_id, realization, seed, kinds, series_length in tasks
+        )
+    else:
+        computed = [
+            _dhvg_kl_realization(
+                dataset_id,
+                realization,
+                seed,
+                kinds,
+                series_length,
+                gen_cfg,
+                audit.n_steps,
+                config.iaaft_max_iter,
+                config.iaaft_min_iter,
+                config.iaaft_tol,
+            )
+            for dataset_id, realization, seed, kinds, series_length in tasks
+        ]
+    kl_map: dict[tuple[str, int, str], float] = {}
+    for item in computed:
+        for kind, value in item["kl"].items():
+            kl_map[(item["dataset_id"], int(item["realization"]), kind)] = float(value)
+    logger.info(
+        "Recomputed dHVG kl_inout for %d series in %.2fs",
+        len(kl_map),
+        time.perf_counter() - t0,
+    )
+    return kl_map
+
+
+def collect_dhvg_irreversibility(
+    records: Sequence[dict[str, Any]],
+    config: SurrogateAuditConfig,
+    *,
+    generator_config: GeneratorSuiteConfig | None = None,
+    n_workers: int = 1,
+) -> pd.DataFrame:
+    """Long table of ``dHVG`` ``i_dir`` and ``kl_inout`` per surrogate record."""
+    if not records:
+        return pd.DataFrame(columns=list(_DHVG_LONG_COLUMNS))
+
+    keys = [
+        (str(rec["dataset_id"]), int(rec["realization"]), str(rec["surrogate_kind"]))
+        for rec in records
+    ]
+    if len(keys) != len(set(keys)):
+        raise ValueError(
+            "Duplicate (dataset_id, realization, surrogate_kind) in surrogate records"
+        )
+
+    if _records_store_kl(records):
+        logger.info("dHVG kl_inout already stored in records; skipping graph rebuild")
+        kl_map = {
+            (
+                str(rec["dataset_id"]),
+                int(rec["realization"]),
+                str(rec["surrogate_kind"]),
+            ): float(rec["matrix"].loc["kl_inout", "dHVG"])
+            for rec in records
+        }
+        source = "records"
+    else:
+        kl_map = _recompute_kl_map(records, config, generator_config, n_workers)
+        source = "recomputed_dhvg"
+
+    rows: list[dict[str, Any]] = []
+    for rec in records:
+        key = (str(rec["dataset_id"]), int(rec["realization"]), str(rec["surrogate_kind"]))
+        matrix = rec["matrix"]
+        if "dHVG" not in matrix.columns or "i_dir" not in matrix.index:
+            raise KeyError(f"Record {key} has no dHVG i_dir column")
+        if key not in kl_map:
+            raise KeyError(f"Missing kl_inout for {key}")
+        rows.append(
+            {
+                "dataset_id": key[0],
+                "regime": rec.get("regime", ""),
+                "realization": key[1],
+                "surrogate_kind": key[2],
+                "i_dir": float(matrix.loc["i_dir", "dHVG"]),
+                "kl_inout": float(kl_map[key]),
+                "kl_source": source,
+            }
+        )
+    return pd.DataFrame(rows, columns=list(_DHVG_LONG_COLUMNS))
+
+
+def summarize_dhvg_irreversibility(frame: pd.DataFrame) -> pd.DataFrame:
+    """Mean, std, median and paired Wilcoxon tests of original vs surrogates."""
+    columns = [
+        "regime",
+        "metric",
+        "contrast",
+        "n_pairs",
+        "mean_original",
+        "std_original",
+        "median_original",
+        "mean_surrogate",
+        "std_surrogate",
+        "median_surrogate",
+        "test",
+        "statistic",
+        "p_value",
+        "effect_size",
+        "effect_size_name",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+
+    regimes = list(dict.fromkeys(frame["dataset_id"].astype(str).tolist()))
+    rows: list[dict[str, Any]] = []
+    for regime in regimes:
+        subset = frame[frame["dataset_id"].astype(str) == regime]
+        original = subset[subset["surrogate_kind"] == "original"]
+        if original.empty:
+            continue
+        for metric_name, column in _DHVG_METRIC_COLUMNS:
+            original_by_r = original.set_index("realization")[column]
+            for contrast in _DHVG_CONTRASTS:
+                other = subset[subset["surrogate_kind"] == contrast]
+                if other.empty:
+                    continue
+                paired = pd.concat(
+                    [
+                        original_by_r.rename("original"),
+                        other.set_index("realization")[column].rename("surrogate"),
+                    ],
+                    axis=1,
+                    join="inner",
+                ).dropna()
+                if paired.empty:
+                    continue
+                original_values = paired["original"].to_numpy(dtype=float)
+                surrogate_values = paired["surrogate"].to_numpy(dtype=float)
+                test = _paired_wilcoxon(original_values, surrogate_values)
+                rows.append(
+                    {
+                        "regime": regime,
+                        "metric": metric_name,
+                        "contrast": contrast,
+                        "n_pairs": int(test["n_pairs"]),
+                        "mean_original": float(np.mean(original_values)),
+                        "std_original": _sample_std(original_values),
+                        "median_original": float(np.median(original_values)),
+                        "mean_surrogate": float(np.mean(surrogate_values)),
+                        "std_surrogate": _sample_std(surrogate_values),
+                        "median_surrogate": float(np.median(surrogate_values)),
+                        "test": test["test"],
+                        "statistic": test["statistic"],
+                        "p_value": test["p_value"],
+                        "effect_size": test["effect_size"],
+                        "effect_size_name": test["effect_size_name"],
+                    }
+                )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _indexed_method_frame(
+    records: Sequence[dict[str, Any]],
+    method: str,
+) -> pd.DataFrame:
+    """Descriptor columns of one TS2G method, indexed by record identity."""
+    rows: list[dict[str, float]] = []
+    index: list[tuple[str, int, str]] = []
+    for rec in records:
+        matrix = rec["matrix"]
+        if method not in matrix.columns:
+            raise KeyError(f"Method {method!r} missing from a surrogate matrix")
+        rows.append(
+            {
+                feature_name(method, desc): float(matrix.loc[desc, method])
+                for desc in DESCRIPTOR_IDS
+            }
+        )
+        index.append(
+            (str(rec["dataset_id"]), int(rec["realization"]), str(rec["surrogate_kind"]))
+        )
+    frame = pd.DataFrame(rows)
+    frame.index = pd.MultiIndex.from_tuples(
+        index,
+        names=("dataset_id", "realization", "surrogate_kind"),
+    )
+    return frame
+
+
+def _cv_binary_view(
+    x: pd.DataFrame,
+    y_bin: pd.Series,
+    audit: AuditConfig,
+) -> dict[str, dict[str, float]]:
+    """Stratified CV AUROC and macro-F1 for logistic L2 and random forest."""
+    models = _make_models(audit.seed)
+    nan_block = {
+        name: {
+            "auroc_mean": float("nan"),
+            "auroc_std": float("nan"),
+            "macro_f1_mean": float("nan"),
+            "n_features": 0,
+        }
+        for name in models
+    }
+    if x.shape[1] == 0 or int(y_bin.nunique()) < 2:
+        return nan_block
+    health = diagnose_and_clean(x, audit)
+    x_clean = health.x_clean
+    n_features = int(x_clean.shape[1])
+    if n_features == 0:
+        return nan_block
+    n_splits = min(audit.n_folds, int(y_bin.value_counts().min()))
+    if n_splits < 2:
+        return nan_block
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=audit.seed)
+    xa = x_clean.to_numpy(dtype=float)
+    ya = y_bin.to_numpy(dtype=int)
+    out: dict[str, dict[str, float]] = {}
+    for model_name, model in models.items():
+        f1s: list[float] = []
+        aucs: list[float] = []
+        for train_idx, test_idx in skf.split(xa, ya):
+            clf: Pipeline = clone(model)
+            clf.fit(xa[train_idx], ya[train_idx])
+            pred = clf.predict(xa[test_idx])
+            f1s.append(
+                float(f1_score(ya[test_idx], pred, average="macro", zero_division=0))
+            )
+            if len(np.unique(ya[test_idx])) < 2:
+                continue
+            if hasattr(clf, "predict_proba"):
+                score = clf.predict_proba(xa[test_idx])[:, 1]
+            else:
+                score = clf.decision_function(xa[test_idx])
+            aucs.append(float(roc_auc_score(ya[test_idx], score)))
+        out[model_name] = {
+            "auroc_mean": float(np.mean(aucs)) if aucs else float("nan"),
+            "auroc_std": float(np.std(aucs)) if aucs else float("nan"),
+            "macro_f1_mean": float(np.mean(f1s)) if f1s else float("nan"),
+            "n_features": n_features,
+        }
+    return out
+
+
+def dhvg_vs_hvg_auroc(
+    records: Sequence[dict[str, Any]],
+    kl_frame: pd.DataFrame,
+    config: SurrogateAuditConfig,
+) -> pd.DataFrame:
+    """Binary AUROC of original vs each surrogate using only HVG or only dHVG."""
+    columns = [
+        "regime",
+        "contrast",
+        "feature_set",
+        "model",
+        "n_features",
+        "auroc_mean",
+        "auroc_std",
+        "macro_f1_mean",
+    ]
+    if not records or kl_frame.empty:
+        return pd.DataFrame(columns=columns)
+
+    hvg = _indexed_method_frame(records, "HVG")
+    dhvg = _indexed_method_frame(records, "dHVG")
+    kl_index = kl_frame.set_index(["dataset_id", "realization", "surrogate_kind"])
+    kl_column = feature_name("dHVG", "kl_inout")
+    dhvg_plus = dhvg.join(kl_index["kl_inout"].rename(kl_column), how="left")
+    feature_sets = {
+        "HVG": hvg,
+        "dHVG": dhvg,
+        "dHVG_plus_kl": dhvg_plus,
+        "kl_inout_only": dhvg_plus[[kl_column]],
+    }
+    audit = config.audit
+    regimes = [r for r in audit.regimes if r in set(hvg.index.get_level_values("dataset_id"))]
+    rows: list[dict[str, Any]] = []
+    scored: dict[tuple[str, str, str, str], dict[str, float]] = {}
+    for regime in regimes:
+        for contrast in _DHVG_CONTRASTS:
+            for set_name, frame in feature_sets.items():
+                kind_level = frame.index.get_level_values("surrogate_kind")
+                regime_level = frame.index.get_level_values("dataset_id")
+                mask = (regime_level == regime) & kind_level.isin(("original", contrast))
+                subset = frame.loc[mask]
+                y_bin = pd.Series(
+                    (subset.index.get_level_values("surrogate_kind") == "original").astype(int),
+                    name="original",
+                )
+                metrics = _cv_binary_view(
+                    subset.reset_index(drop=True),
+                    y_bin.reset_index(drop=True),
+                    audit,
+                )
+                for model_name, block in metrics.items():
+                    scored[(regime, contrast, set_name, model_name)] = block
+                    rows.append(
+                        {
+                            "regime": regime,
+                            "contrast": contrast,
+                            "feature_set": set_name,
+                            "model": model_name,
+                            "n_features": block["n_features"],
+                            "auroc_mean": block["auroc_mean"],
+                            "auroc_std": block["auroc_std"],
+                            "macro_f1_mean": block["macro_f1_mean"],
+                        }
+                    )
+            for model_name in ("logistic", "random_forest"):
+                for gain_name, left_name in (
+                    ("gain_dHVG_minus_HVG", "dHVG"),
+                    ("gain_dHVG_plus_kl_minus_HVG", "dHVG_plus_kl"),
+                    ("gain_kl_only_minus_HVG", "kl_inout_only"),
+                ):
+                    left = scored[(regime, contrast, left_name, model_name)]["auroc_mean"]
+                    right = scored[(regime, contrast, "HVG", model_name)]["auroc_mean"]
+                    gain = (
+                        float(left - right)
+                        if np.isfinite(left) and np.isfinite(right)
+                        else float("nan")
+                    )
+                    rows.append(
+                        {
+                            "regime": regime,
+                            "contrast": contrast,
+                            "feature_set": gain_name,
+                            "model": model_name,
+                            "n_features": float("nan"),
+                            "auroc_mean": gain,
+                            "auroc_std": float("nan"),
+                            "macro_f1_mean": float("nan"),
+                        }
+                    )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def plot_dhvg_irreversibility(
+    frame: pd.DataFrame,
+    output_dir: Path,
+    *,
+    lang: str = "en",
+    regimes: Sequence[str] | None = None,
+) -> list[Path]:
+    """Boxplots of ``kl_inout`` and ``i_dir`` by regime and surrogate kind."""
+    if frame.empty:
+        return []
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if regimes is None:
+        regime_order = list(dict.fromkeys(frame["dataset_id"].astype(str).tolist()))
+    else:
+        present = set(frame["dataset_id"].astype(str))
+        regime_order = [str(r) for r in regimes if str(r) in present]
+        if not regime_order:
+            regime_order = list(dict.fromkeys(frame["dataset_id"].astype(str).tolist()))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.6))
+    _grouped_kind_boxes(axes[0], frame, "kl_inout", regime_order)
+    kl_values = frame["kl_inout"].to_numpy(dtype=float)
+    finite_kl = kl_values[np.isfinite(kl_values)]
+    if (
+        finite_kl.size
+        and float(finite_kl.min()) > 0.0
+        and float(finite_kl.max()) / float(finite_kl.min()) > 25.0
+    ):
+        axes[0].set_yscale("log")
+    axes[0].set_title(_t("surrogate_dhvg_kl_title", lang))
+    axes[0].set_ylabel(_t("surrogate_dhvg_ylabel_kl", lang))
+    axes[0].set_xlabel(_t("surrogate_dhvg_xlabel", lang))
+
+    idir = frame["i_dir"].to_numpy(dtype=float)
+    finite_idir = idir[np.isfinite(idir)]
+    saturated = (
+        finite_idir.size > 0 and float(np.max(finite_idir) - np.min(finite_idir)) < 1e-8
+    )
+    if saturated:
+        axes[1].axhline(float(np.mean(finite_idir)), color="#1b3a4b", lw=1.4)
+        axes[1].set_ylim(0.0, 1.05)
+        axes[1].set_xlim(-0.5, len(regime_order) - 0.5)
+        axes[1].text(
+            0.02,
+            0.12,
+            _t("surrogate_dhvg_idir_saturated", lang),
+            transform=axes[1].transAxes,
+            fontsize=8,
+            color="#1b3a4b",
+        )
+    else:
+        _grouped_kind_boxes(axes[1], frame, "i_dir", regime_order)
+    axes[1].set_title(_t("surrogate_dhvg_idir_title", lang))
+    axes[1].set_ylabel(_t("surrogate_dhvg_ylabel_idir", lang))
+    axes[1].set_xlabel(_t("surrogate_dhvg_xlabel", lang))
+    axes[1].set_xticks(range(len(regime_order)))
+    axes[1].set_xticklabels(regime_order, rotation=25, ha="right")
+
+    from matplotlib.patches import Patch
+
+    handles = [
+        Patch(facecolor=color, edgecolor="#333333", label=label)
+        for _kind, color, label in _DHVG_KIND_STYLE
+    ]
+    axes[0].legend(handles=handles, frameon=False, ncol=4, loc="upper right", fontsize=8)
+    fig.suptitle(_t("surrogate_dhvg_suptitle", lang), fontsize=12)
+    fig.tight_layout()
+    paths = save_figure_trio(fig, output_dir / "surrogate_dhvg_irreversibility")
+    return paths
+
+
+def _grouped_kind_boxes(
+    ax: plt.Axes,
+    frame: pd.DataFrame,
+    column: str,
+    regimes: Sequence[str],
+) -> None:
+    """Draw one box per surrogate kind inside each regime group."""
+    width = 0.18
+    for j, (kind, color, _label) in enumerate(_DHVG_KIND_STYLE):
+        positions: list[float] = []
+        data: list[NDArray[np.floating]] = []
+        for i, regime in enumerate(regimes):
+            vals = frame.loc[
+                (frame["dataset_id"].astype(str) == regime) & (frame["surrogate_kind"] == kind),
+                column,
+            ].to_numpy(dtype=float)
+            vals = vals[np.isfinite(vals)]
+            if vals.size == 0:
+                continue
+            positions.append(i + (j - 1.5) * width)
+            data.append(vals)
+        if not data:
+            continue
+        drawn = ax.boxplot(
+            data,
+            positions=positions,
+            widths=width * 0.92,
+            patch_artist=True,
+            manage_ticks=False,
+            medianprops={"color": "white", "linewidth": 1.2},
+            whiskerprops={"color": "#333333"},
+            capprops={"color": "#333333"},
+            boxprops={"edgecolor": "#333333", "linewidth": 0.6},
+            flierprops={
+                "marker": ".",
+                "markersize": 3,
+                "markerfacecolor": color,
+                "markeredgecolor": color,
+                "alpha": 0.45,
+            },
+        )
+        for patch in drawn["boxes"]:
+            patch.set_facecolor(color)
+    ax.set_xticks(range(len(regimes)))
+    ax.set_xticklabels(list(regimes), rotation=25, ha="right")
+    ax.grid(axis="y", color="#e4e0d8", lw=0.6)
+
+
+def _merge_isolated_visibility_auroc(tables_dir: Path, auroc: pd.DataFrame) -> None:
+    """Append original-vs-IAAFT HVG/dHVG rows to ``auroc_binary.csv``."""
+    if auroc.empty:
+        return
+    subset = auroc[
+        (auroc["contrast"] == "iaaft")
+        & (auroc["feature_set"].isin(_ISOLATED_VISIBILITY_FAMILIES))
+    ]
+    if subset.empty:
+        return
+    extra = pd.DataFrame(
+        {
+            "regime": subset["regime"].to_numpy(),
+            "family": subset["feature_set"].to_numpy(),
+            "model": subset["model"].to_numpy(),
+            "auroc_mean": subset["auroc_mean"].to_numpy(dtype=float),
+            "auroc_std": subset["auroc_std"].to_numpy(dtype=float),
+            "macro_f1_mean": subset["macro_f1_mean"].to_numpy(dtype=float),
+        }
+    )
+    path = tables_dir / "auroc_binary.csv"
+    if path.exists():
+        base = pd.read_csv(path)
+        base = base.loc[~base["family"].isin(_ISOLATED_VISIBILITY_FAMILIES)]
+        merged = pd.concat([base, extra], ignore_index=True)
+    else:
+        merged = extra
+    save_table_csv(path, merged)
+
+
+def write_dhvg_irreversibility_artifacts(
+    result: SurrogateAuditResult,
+    records: Sequence[dict[str, Any]],
+    output_dir: Path,
+    *,
+    lang: str = "en",
+    n_workers: int = 1,
+) -> list[Path]:
+    """Write the dHVG irreversibility table, the HVG-vs-dHVG AUROC and the figure."""
+    if not records:
+        logger.warning("No surrogate records available; skipping dHVG irreversibility")
+        return []
+    t0 = time.perf_counter()
+    long_frame = collect_dhvg_irreversibility(
+        records,
+        result.config,
+        n_workers=n_workers,
+    )
+    summary = summarize_dhvg_irreversibility(long_frame)
+    tables_dir = Path(output_dir) / "data" / "tables"
+    save_table_csv(tables_dir / "dhvg_irreversibility.csv", summary)
+    save_table_csv(tables_dir / "dhvg_irreversibility_long.csv", long_frame)
+    result.dhvg_irreversibility = summary
+    auroc = dhvg_vs_hvg_auroc(records, long_frame, result.config)
+    save_table_csv(tables_dir / "dhvg_vs_hvg_auroc.csv", auroc)
+    _merge_isolated_visibility_auroc(tables_dir, auroc)
+    figures = plot_dhvg_irreversibility(
+        long_frame,
+        Path(output_dir) / "figures",
+        lang=lang,
+        regimes=result.config.audit.regimes,
+    )
+    result.dhvg_vs_hvg_auroc = auroc
+    logger.info(
+        "dHVG irreversibility table + figure written in %.2fs (%d rows)",
+        time.perf_counter() - t0,
+        len(summary),
+    )
+    return figures
+
+
+def _append_dhvg_markdown(lines: list[str], result: SurrogateAuditResult) -> None:
+    """Append the dHVG irreversibility and HVG-vs-dHVG sections when present."""
+    summary = result.dhvg_irreversibility
+    if summary is None or summary.empty:
+        return
+    lines.extend(
+        [
+            "",
+            "## Irreversibilidad temporal dHVG",
+            "",
+            "Wilcoxon de rangos con signo, pareado por realización "
+            "(original frente a cada subrogado). "
+            "Tamaño de efecto: correlación rank-biserial "
+            "(positivo ⇒ el original es mayor que el subrogado). "
+            "`dHVG__i_dir` vale 1 en todo dHVG con aristas solo hacia el futuro, "
+            "así que no discrimina la flecha del tiempo; la métrica informativa es "
+            "`dHVG__kl_inout`.",
+            "",
+            "| Régimen | métrica | contraste | n | media orig | media surr | p | r_rb |",
+            "|---|---|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in summary.itertuples(index=False):
+        lines.append(
+            "| {regime} | {metric} | {contrast} | {n_pairs} | {mean_o} | {mean_s} | {p} | {effect} |".format(
+                regime=row.regime,
+                metric=row.metric,
+                contrast=row.contrast,
+                n_pairs=int(row.n_pairs),
+                mean_o=_fmt_num(row.mean_original, ".4f"),
+                mean_s=_fmt_num(row.mean_surrogate, ".4f"),
+                p=_fmt_num(row.p_value, ".2e"),
+                effect=_fmt_num(row.effect_size, ".3f"),
+            )
+        )
+
+    auroc = result.dhvg_vs_hvg_auroc
+    if auroc is None or auroc.empty:
+        return
+    shown = auroc[
+        (auroc["model"] == "random_forest")
+        & (auroc["contrast"].isin(["shuffled", "iaaft"]))
+        & (
+            auroc["feature_set"].isin(
+                [
+                    "HVG",
+                    "dHVG",
+                    "dHVG_plus_kl",
+                    "kl_inout_only",
+                    "gain_dHVG_minus_HVG",
+                    "gain_kl_only_minus_HVG",
+                ]
+            )
+        )
+    ]
+    lines.extend(
+        [
+            "",
+            "## Flecha del tiempo: dHVG solo frente a HVG solo (RF AUROC)",
+            "",
+            "Clase positiva = serie original. "
+            "`gain_dHVG_minus_HVG` = AUROC(dHVG) − AUROC(HVG). "
+            "El contraste `shuffled` destruye el orden temporal; "
+            "`iaaft` conserva espectro y amplitudes. "
+            "La tabla completa está en `data/tables/dhvg_vs_hvg_auroc.csv`.",
+            "",
+            "| Régimen | contraste | features | AUROC |",
+            "|---|---|---|---:|",
+        ]
+    )
+    for row in shown.itertuples(index=False):
+        lines.append(
+            f"| {row.regime} | {row.contrast} | {row.feature_set} | "
+            f"{_fmt_num(row.auroc_mean, '.3f')} |"
+        )

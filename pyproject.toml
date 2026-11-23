@@ -23,6 +23,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+rq1 = [
+    "dit[broja]>=1.5",
+    "seaborn>=0.13",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

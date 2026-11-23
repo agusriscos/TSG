@@ -9,7 +9,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from tsg.audit.artifacts import default_workers, resolve_lang
-from tsg.audit.phase_maps import PhaseMapsAuditConfig, PhaseMapsAuditPipeline
+from tsg.audit.phase_maps import (
+    PhaseMapsAuditConfig,
+    PhaseMapsAuditPipeline,
+    backfill_disconnection_breakdown,
+)
 from tsg.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -64,6 +68,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Regenerate figures from saved metrics JSON without recomputing graphs.",
     )
+    parser.add_argument(
+        "--disconnection-only",
+        action="store_true",
+        help=(
+            "Fill disconnection rates by family and method from the saved grid "
+            "without retraining classifiers, then refresh figures and tables."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -98,6 +110,23 @@ def main() -> None:
     lang = resolve_lang(config.audit.profile, args.lang)
     workers = default_workers() if args.workers is None else max(1, int(args.workers))
     pipeline = PhaseMapsAuditPipeline(config, lang=lang, n_workers=workers)
+
+    if args.disconnection_only:
+        logger.info(
+            "Disconnection-only backfill output=%s workers=%d lang=%s",
+            args.output_dir,
+            workers,
+            lang,
+        )
+        backfill_disconnection_breakdown(
+            args.output_dir,
+            config,
+            descriptor_config=pipeline.descriptor_config,
+            n_workers=workers,
+        )
+        pipeline.plot_only(args.output_dir, lang=lang)
+        logger.info("Done. Artifacts in %s", args.output_dir)
+        return
 
     if args.plot_only:
         logger.info("Plot-only phase-maps audit output=%s lang=%s", args.output_dir, lang)
