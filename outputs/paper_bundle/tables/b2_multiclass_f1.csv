@@ -1,0 +1,11 @@
+family,model,macro_f1_mean,macro_f1_std
+visibility,random_forest,0.6428647172,0.01859969036
+visibility,logistic,0.6626998122,0.02466851206
+transition,random_forest,0.6011901587,0.03529515152
+transition,logistic,0.5804629449,0.02788100287
+proximity,random_forest,0.6995767135,0.02044844381
+proximity,logistic,0.6989560507,0.02867785438
+similarity,random_forest,0.5972075468,0.03773951382
+similarity,logistic,0.5619221556,0.01459960979
+full,random_forest,0.7153648809,0.03587197332
+full,logistic,0.7087359494,0.02431344244

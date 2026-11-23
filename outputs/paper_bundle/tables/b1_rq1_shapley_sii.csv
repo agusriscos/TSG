@@ -1,0 +1,13 @@
+model,pair,sii,v_empty
+logistic,vis+prox,-0.3416591705,0.01282051282
+logistic,vis+trans,-0.2949572722,0.01282051282
+logistic,vis+sim,-0.3055824695,0.01282051282
+logistic,prox+trans,-0.2857497205,0.01282051282
+logistic,prox+sim,-0.3191676805,0.01282051282
+logistic,trans+sim,-0.2740430938,0.01282051282
+random_forest,vis+prox,-0.3230213614,0.01282051282
+random_forest,vis+trans,-0.3259571755,0.01282051282
+random_forest,vis+sim,-0.3127863649,0.01282051282
+random_forest,prox+trans,-0.3032648678,0.01282051282
+random_forest,prox+sim,-0.2958438629,0.01282051282
+random_forest,trans+sim,-0.3132182941,0.01282051282

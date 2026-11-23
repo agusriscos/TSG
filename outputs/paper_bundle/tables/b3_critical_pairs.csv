@@ -1,0 +1,6 @@
+pair,confusion_rate
+arma_correlated__lorenz,0
+lorenz__rossler,0
+fbm_persistent__brownian,0
+logistic_weak__logistic,0
+regime_switching__quasiperiodic,0

@@ -1,0 +1,5 @@
+pretreatment,view,model,auroc_mean,n_realizations,n_steps,seed,methods
+end_match,transition,random_forest,0.7416666667,30,1000,42,"NVG,HVG,dHVG,STN,OPN"
+end_match,transition,logistic,0.75,30,1000,42,"NVG,HVG,dHVG,STN,OPN"
+end_match,visibility,random_forest,0.6444444444,30,1000,42,"NVG,HVG,dHVG,STN,OPN"
+end_match,visibility,logistic,0.8,30,1000,42,"NVG,HVG,dHVG,STN,OPN"

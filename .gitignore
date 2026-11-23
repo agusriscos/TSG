@@ -11,6 +11,12 @@ build/
 venv/
 outputs/*
 !outputs/.gitkeep
+# Curated paper-writing bundle (figures/tables/notes); keep logs out.
+!outputs/paper_bundle/
+!outputs/paper_bundle/**
+outputs/paper_bundle/nohup.log
+outputs/paper_bundle/run_log.txt
+outputs/paper_bundle/*.log
 *.npz
 .DS_Store
 

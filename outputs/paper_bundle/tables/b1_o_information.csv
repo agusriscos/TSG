@@ -1,0 +1,17 @@
+scope,group,omega_bits,n_samples,reading
+global,,0.188973966,360,redundancia
+group,stochastic,2.500439935,150,redundancia
+group,chaotic_flows,0.3598542892,60,redundancia
+group,discrete_maps,0.09859332194,90,redundancia
+regime,white_noise,0.002640135347,30,equilibrio
+regime,fbm_antipersistent,0.7115133851,30,redundancia
+regime,brownian,0.4209286758,30,redundancia
+regime,fbm_persistent,-0.04881306796,30,equilibrio
+regime,arma_correlated,1.025568356,30,redundancia
+regime,quasiperiodic,0.0305902888,30,equilibrio
+regime,lorenz,0.02807807938,30,equilibrio
+regime,rossler,0.006231843702,30,equilibrio
+regime,henon,0.003075228294,30,equilibrio
+regime,logistic_weak,0.007171005001,30,equilibrio
+regime,logistic,0.009248047153,30,equilibrio
+regime,regime_switching,0.03605632181,30,equilibrio
