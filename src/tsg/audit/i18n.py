@@ -47,7 +47,8 @@ _STRINGS: dict[str, dict[str, str]] = {
             "Binary AUROC original vs IAAFT (RF) by regime × family"
         ),
         "surrogate_dhvg_suptitle": (
-            "dHVG temporal irreversibility — original vs surrogates"
+            r"dHVG temporal irreversibility: "
+            r"smoothed $\mathrm{KL}(P(k^{\mathrm{in}})\,\|\,P(k^{\mathrm{out}}))$"
         ),
         "surrogate_dhvg_kl_title": (
             r"Smoothed $\mathrm{KL}(P(k^{\mathrm{in}})\,\|\,P(k^{\mathrm{out}}))$"
@@ -162,7 +163,8 @@ _STRINGS: dict[str, dict[str, str]] = {
             "AUROC binario original vs IAAFT (RF) por régimen × familia"
         ),
         "surrogate_dhvg_suptitle": (
-            "Irreversibilidad temporal dHVG — original vs subrogados"
+            r"Irreversibilidad temporal dHVG: "
+            r"KL suavizada $\mathrm{KL}(P(k^{\mathrm{in}})\,\|\,P(k^{\mathrm{out}}))$"
         ),
         "surrogate_dhvg_kl_title": (
             r"KL suavizada $\mathrm{KL}(P(k^{\mathrm{in}})\,\|\,P(k^{\mathrm{out}}))$"

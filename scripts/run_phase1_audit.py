@@ -96,6 +96,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Regenerate figures from saved NPZ/JSON/pickle without recomputing graphs.",
     )
+    parser.add_argument(
+        "--difficulty-sweep",
+        action="store_true",
+        help=(
+            "B3 non-saturated classification protocol from the YAML difficulty: block. "
+            "Sweeps N × SNR, scores headline binary critical pairs, and, when "
+            "data/oof_predictions.npz or data/features_clean.npz already exist, "
+            "writes clean-panel proper scores. Does not rebuild the clean N=1500 "
+            "ensemble or its cache. Copies b3_*.csv and b3_hard_08/09 into "
+            "outputs/paper_bundle."
+        ),
+    )
+    parser.add_argument(
+        "--difficulty-force",
+        action="store_true",
+        help="Ignore difficulty feature/metric checkpoints and recompute those cells.",
+    )
     return parser.parse_args()
 
 
@@ -173,6 +190,34 @@ def main() -> None:
     if args.plot_only:
         logger.info("Plot-only mode output=%s lang=%s", args.output_dir, lang)
         pipeline.plot_only(args.output_dir, lang=lang)
+        return
+
+    if args.difficulty_sweep:
+        from tsg.audit.hard_frontiers_difficulty import run_difficulty_protocol
+
+        logger.info(
+            "B3 difficulty sweep output=%s lang=%s workers=%d force=%s",
+            args.output_dir,
+            lang,
+            workers,
+            args.difficulty_force,
+        )
+        result = run_difficulty_protocol(
+            config,
+            config_path=args.config,
+            output_dir=args.output_dir,
+            n_workers=workers,
+            lang=lang,
+            force=bool(args.difficulty_force),
+        )
+        logger.info(
+            "Difficulty headline N=%d SNR=%s full_rf_macro_f1=%.4f fallback=%s (%s)",
+            result.operating_point.n_steps,
+            result.operating_point.snr_db,
+            result.operating_point.macro_f1_mean,
+            result.fallback_applied,
+            result.fallback_reason,
+        )
         return
 
     logger.info(

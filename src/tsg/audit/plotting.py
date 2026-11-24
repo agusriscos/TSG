@@ -308,8 +308,15 @@ def plot_family_ablation(
     output_dir: Path,
     *,
     lang: str = "en",
+    note: str | None = None,
 ) -> Path:
-    """Macro-F1 by ablation view (incl. similarity) and per-regime F1 bars."""
+    """Macro-F1 by ablation view (incl. similarity) and per-regime F1 bars.
+
+    Parameters
+    ----------
+    note
+        Optional subtitle (e.g. the B3 difficulty headline operating point).
+    """
     views = ["visibility", "transition", "proximity", "similarity", "full"]
     n_regimes = len(config.regimes)
     # Wide canvas so 12 rotated regime names never collide.
@@ -383,7 +390,11 @@ def plot_family_ablation(
             bbox_to_anchor=(1.01, 1.0),
             borderaxespad=0.0,
         )
-    fig.tight_layout()
+    if note:
+        fig.suptitle(note, fontsize=10)
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
+    else:
+        fig.tight_layout()
     return _save(fig, output_dir / "04_family_ablation_scores.png", config.figure_dpi)
 
 

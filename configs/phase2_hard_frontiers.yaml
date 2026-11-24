@@ -51,3 +51,23 @@ audit:
     - [fbm_persistent, brownian]
     - [logistic_weak, logistic]
     - [regime_switching, quasiperiodic]
+
+# Classification protocol that keeps Macro-F1 off the ceiling.
+# The clean ensemble above (N=1500, R=30) is unchanged and stays the
+# geometry / cache source for B1. ``null`` SNR is the clean series (∞).
+# Headline rule (a priori, see hard_frontiers_difficulty.resolve_headline):
+#   start at N=500, SNR=20 dB;
+#   if full RF CV Macro-F1 ≥ 0.98 or its OOF bootstrap CI includes 1,
+#   move to N=250, SNR=20 dB;
+#   if full RF CV Macro-F1 < 0.80, pick the grid point closest to 0.875;
+#   if the chosen point is still outside [0.80, 0.95] or its CI includes 1,
+#   pick the in-range grid point closest to 0.875 whose CI excludes 1.
+difficulty:
+  n_grid: [250, 500, 750, 1000, 1500]
+  snr_db: [null, 20, 10]
+  n_realizations: 20
+  n_bootstrap: 1000
+  bootstrap_seed: 42
+  headline:
+    n_steps: 500
+    snr_db: 20

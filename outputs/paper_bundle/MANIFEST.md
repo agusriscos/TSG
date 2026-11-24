@@ -1,14 +1,14 @@
 # Paper bundle MANIFEST
 
-- Generated (UTC): `2026-11-23T16:35:22Z`
-- Git commit: `44b353426099c6b9d06c99ba552290fdd4f2f4d1`
+- Generated (UTC): `2026-11-24T09:09:03Z`
+- Git commit: `5ea7de70d94038224bdab59b0b8d875ce8334995`
 - Git branch: `main`
 
 ## Counts
 
-- Figures: **23** stems / **69** files
-- Tables: **30** CSV
-- Notes: **2**
+- Figures: **25** stems / **75** files
+- Tables: **35** CSV
+- Notes: **3**
 
 ## Tables
 
@@ -30,10 +30,15 @@
 - `b2_delta_T_decomposed.csv` (1522 B, ~10 rows)
 - `b2_dhvg_irreversibility.csv` (5732 B, ~42 rows)
 - `b2_multiclass_f1.csv` (521 B, ~10 rows)
-- `b3_ablation.csv` (771 B, ~10 rows)
+- `b3_ablation.csv` (877 B, ~10 rows)
+- `b3_ablation_n1500_clean.csv` (771 B, ~10 rows)
 - `b3_critical_pairs.csv` (151 B, ~5 rows)
+- `b3_critical_pairs_binary_hard.csv` (12176 B, ~50 rows)
 - `b3_critical_pairs_by_family.csv` (6909 B, ~50 rows)
+- `b3_difficulty_curve.csv` (42572 B, ~150 rows)
+- `b3_headline_operating_point.csv` (6799 B, ~21 rows)
 - `b3_logistic_l2_importance.csv` (6799 B, ~105 rows)
+- `b3_proper_scores_n1500_clean.csv` (3151 B, ~10 rows)
 - `b3_rf_gini_importance.csv` (7100 B, ~105 rows)
 - `b4_delta_f1.csv` (4035 B, ~60 rows)
 - `b4_delta_f1_by_method.csv` (7117 B, ~96 rows)
@@ -63,6 +68,8 @@
 - `b3_hard_05_critical_pairs_boxplots` (.pdf, .png, .svg)
 - `b3_hard_06_feature_importance_top15` (.pdf, .png, .svg)
 - `b3_hard_07_critical_pairs_family_analysis` (.pdf, .png, .svg)
+- `b3_hard_08_difficulty_curve` (.pdf, .png, .svg)
+- `b3_hard_09_critical_pairs_binary_hard` (.pdf, .png, .svg)
 - `b4_inv_01_invariance_matrix` (.pdf, .png, .svg)
 - `b4_inv_02_invariance_matrix_by_method` (.pdf, .png, .svg)
 - `b5_phase_01_phase_maps_families` (.pdf, .png, .svg)
@@ -73,3 +80,4 @@
 
 - `b1_rq1_pid_mmi_vs_broja.md` (1308 B)
 - `b2_arma_iaaft_diagnosis.md` (7243 B)
+- `b3_difficulty_protocol.md` (1053 B)

@@ -1,12 +1,12 @@
 {
-  "generated_at_utc": "2026-11-23T16:35:22Z",
-  "git_commit": "44b353426099c6b9d06c99ba552290fdd4f2f4d1",
+  "generated_at_utc": "2026-11-24T09:09:03Z",
+  "git_commit": "5ea7de70d94038224bdab59b0b8d875ce8334995",
   "git_branch": "main",
   "counts": {
-    "figure_stems": 23,
-    "figure_files": 69,
-    "tables_csv": 30,
-    "notes": 2
+    "figure_stems": 25,
+    "figure_files": 75,
+    "tables_csv": 35,
+    "notes": 3
   },
   "tables": [
     "b1_o_information.csv",
@@ -28,9 +28,14 @@
     "b2_dhvg_irreversibility.csv",
     "b2_multiclass_f1.csv",
     "b3_ablation.csv",
+    "b3_ablation_n1500_clean.csv",
     "b3_critical_pairs.csv",
+    "b3_critical_pairs_binary_hard.csv",
     "b3_critical_pairs_by_family.csv",
+    "b3_difficulty_curve.csv",
+    "b3_headline_operating_point.csv",
     "b3_logistic_l2_importance.csv",
+    "b3_proper_scores_n1500_clean.csv",
     "b3_rf_gini_importance.csv",
     "b4_delta_f1.csv",
     "b4_delta_f1_by_method.csv",
@@ -59,6 +64,8 @@
     "b3_hard_05_critical_pairs_boxplots",
     "b3_hard_06_feature_importance_top15",
     "b3_hard_07_critical_pairs_family_analysis",
+    "b3_hard_08_difficulty_curve",
+    "b3_hard_09_critical_pairs_binary_hard",
     "b4_inv_01_invariance_matrix",
     "b4_inv_02_invariance_matrix_by_method",
     "b5_phase_01_phase_maps_families",
@@ -67,6 +74,7 @@
   ],
   "notes": [
     "b1_rq1_pid_mmi_vs_broja.md",
-    "b2_arma_iaaft_diagnosis.md"
+    "b2_arma_iaaft_diagnosis.md",
+    "b3_difficulty_protocol.md"
   ]
 }

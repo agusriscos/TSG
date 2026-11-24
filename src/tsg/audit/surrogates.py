@@ -1792,7 +1792,11 @@ def plot_dhvg_irreversibility(
     lang: str = "en",
     regimes: Sequence[str] | None = None,
 ) -> list[Path]:
-    """Boxplots of ``kl_inout`` and ``i_dir`` by regime and surrogate kind."""
+    """Boxplots of ``kl_inout`` by regime and surrogate kind.
+
+    ``i_dir`` is omitted: on every dHVG it saturates at 1 (all edges follow
+    the time arrow), so a second panel carries no information.
+    """
     if frame.empty:
         return []
     output_dir = Path(output_dir)
@@ -1805,8 +1809,8 @@ def plot_dhvg_irreversibility(
         if not regime_order:
             regime_order = list(dict.fromkeys(frame["dataset_id"].astype(str).tolist()))
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.2, 4.6))
-    _grouped_kind_boxes(axes[0], frame, "kl_inout", regime_order)
+    fig, ax = plt.subplots(1, 1, figsize=(8.6, 4.8))
+    _grouped_kind_boxes(ax, frame, "kl_inout", regime_order)
     kl_values = frame["kl_inout"].to_numpy(dtype=float)
     finite_kl = kl_values[np.isfinite(kl_values)]
     if (
@@ -1814,35 +1818,10 @@ def plot_dhvg_irreversibility(
         and float(finite_kl.min()) > 0.0
         and float(finite_kl.max()) / float(finite_kl.min()) > 25.0
     ):
-        axes[0].set_yscale("log")
-    axes[0].set_title(_t("surrogate_dhvg_kl_title", lang))
-    axes[0].set_ylabel(_t("surrogate_dhvg_ylabel_kl", lang))
-    axes[0].set_xlabel(_t("surrogate_dhvg_xlabel", lang))
-
-    idir = frame["i_dir"].to_numpy(dtype=float)
-    finite_idir = idir[np.isfinite(idir)]
-    saturated = (
-        finite_idir.size > 0 and float(np.max(finite_idir) - np.min(finite_idir)) < 1e-8
-    )
-    if saturated:
-        axes[1].axhline(float(np.mean(finite_idir)), color="#1b3a4b", lw=1.4)
-        axes[1].set_ylim(0.0, 1.05)
-        axes[1].set_xlim(-0.5, len(regime_order) - 0.5)
-        axes[1].text(
-            0.02,
-            0.12,
-            _t("surrogate_dhvg_idir_saturated", lang),
-            transform=axes[1].transAxes,
-            fontsize=8,
-            color="#1b3a4b",
-        )
-    else:
-        _grouped_kind_boxes(axes[1], frame, "i_dir", regime_order)
-    axes[1].set_title(_t("surrogate_dhvg_idir_title", lang))
-    axes[1].set_ylabel(_t("surrogate_dhvg_ylabel_idir", lang))
-    axes[1].set_xlabel(_t("surrogate_dhvg_xlabel", lang))
-    axes[1].set_xticks(range(len(regime_order)))
-    axes[1].set_xticklabels(regime_order, rotation=25, ha="right")
+        ax.set_yscale("log")
+    ax.set_title(_t("surrogate_dhvg_suptitle", lang), fontsize=12)
+    ax.set_ylabel(_t("surrogate_dhvg_ylabel_kl", lang))
+    ax.set_xlabel(_t("surrogate_dhvg_xlabel", lang))
 
     from matplotlib.patches import Patch
 
@@ -1850,11 +1829,9 @@ def plot_dhvg_irreversibility(
         Patch(facecolor=color, edgecolor="#333333", label=label)
         for _kind, color, label in _DHVG_KIND_STYLE
     ]
-    axes[0].legend(handles=handles, frameon=False, ncol=4, loc="upper right", fontsize=8)
-    fig.suptitle(_t("surrogate_dhvg_suptitle", lang), fontsize=12)
+    ax.legend(handles=handles, frameon=False, ncol=4, loc="upper right", fontsize=8)
     fig.tight_layout()
-    paths = save_figure_trio(fig, output_dir / "surrogate_dhvg_irreversibility")
-    return paths
+    return save_figure_trio(fig, output_dir / "surrogate_dhvg_irreversibility")
 
 
 def _grouped_kind_boxes(

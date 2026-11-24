@@ -64,11 +64,27 @@ def load_generator_suite_config(
     return GeneratorSuiteConfig()
 
 
+# Sentinel: callers that omit SNR keep the historical payload byte-for-byte,
+# so the clean N=1500 B1/B3 cache digest does not change.
+_SNR_UNSET = object()
+
+
 def ensemble_cache_fingerprint(
     audit_config: AuditConfig,
     generator_config: GeneratorSuiteConfig,
+    *,
+    snr_db: Any = _SNR_UNSET,
 ) -> str:
-    """Stable subdirectory name so old caches never mix with new semantics."""
+    """Stable subdirectory name so old caches never mix with new semantics.
+
+    Parameters
+    ----------
+    snr_db
+        Observational SNR in dB, or ``None`` for a clean series. Omit the
+        argument entirely for the historical clean-cache digest. Passing a
+        value (including ``None``) adds an ``snr_db`` field so noisy difficulty
+        cells cannot collide with the clean fingerprint.
+    """
     payload = {
         "cache_version": ENSEMBLE_CACHE_VERSION,
         "n_steps": audit_config.n_steps,
@@ -80,6 +96,12 @@ def ensemble_cache_fingerprint(
         "seed": audit_config.seed,
         "generator": asdict(generator_config),
     }
+    if snr_db is not _SNR_UNSET:
+        if snr_db is None:
+            payload["snr_db"] = None
+        else:
+            value = float(snr_db)
+            payload["snr_db"] = int(value) if value.is_integer() else value
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:12]
@@ -90,9 +112,13 @@ def versioned_cache_dir(
     cache_dir: Path,
     audit_config: AuditConfig,
     generator_config: GeneratorSuiteConfig,
+    *,
+    snr_db: Any = _SNR_UNSET,
 ) -> Path:
     """Return ``cache_dir / <fingerprint>`` for this audit+generator config."""
-    return cache_dir / ensemble_cache_fingerprint(audit_config, generator_config)
+    return cache_dir / ensemble_cache_fingerprint(
+        audit_config, generator_config, snr_db=snr_db
+    )
 
 
 def _cache_path(cache_dir: Path, dataset_id: str, realization: int, seed: int) -> Path:
