@@ -1,0 +1,11 @@
+{
+  "n_steps": 1500,
+  "snr_db": 20.0,
+  "n_realizations_difficulty": 20,
+  "macro_f1_full_rf_mean": 0.9294492544,
+  "macro_f1_full_rf_std": 0.03751090508,
+  "macro_f1_ci_low": 0.8984085204,
+  "macro_f1_ci_high": 0.9629258932,
+  "generated_at_utc": "2026-11-24T11:12:47Z",
+  "source_hard_frontiers": "/home/agusriscos/proyectos/TSG/outputs/reports/phase2_hard_frontiers"
+}

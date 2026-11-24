@@ -20,6 +20,16 @@ outputs/paper_bundle/*.log
 # Keep only PNG in the tracked bundle to limit repo size.
 outputs/paper_bundle/figures/*.pdf
 outputs/paper_bundle/figures/*.svg
+# N=1500 / SNR=20 dB curated slice (paper_bundle + meta only; reports stay local).
+!outputs/n1500_snr20_bundle/
+outputs/n1500_snr20_bundle/*
+!outputs/n1500_snr20_bundle/README.md
+!outputs/n1500_snr20_bundle/meta/
+!outputs/n1500_snr20_bundle/meta/**
+!outputs/n1500_snr20_bundle/paper_bundle/
+!outputs/n1500_snr20_bundle/paper_bundle/**
+outputs/n1500_snr20_bundle/paper_bundle/figures/*.pdf
+outputs/n1500_snr20_bundle/paper_bundle/figures/*.svg
 *.npz
 .DS_Store
 

@@ -970,9 +970,24 @@ class InformationAuditPipeline:
         self.lang = lang
         self.n_workers = max(1, int(n_workers))
 
-    def run(self, output_dir: Path | str | None = None) -> InformationAuditResult:
+    def run(
+        self,
+        output_dir: Path | str | None = None,
+        *,
+        records: list[dict[str, Any]] | None = None,
+    ) -> InformationAuditResult:
         config = self.config
-        records, cache, hits, misses = _load_records(config, self.cache_dir)
+        if records is None:
+            records, cache, hits, misses = _load_records(config, self.cache_dir)
+        else:
+            cache = Path(self.cache_dir)
+            hits = len(records)
+            misses = 0
+            logger.info(
+                "Information audit using %d preloaded records (cache=%s)",
+                len(records),
+                cache,
+            )
         features, labels = build_feature_table(records, config)
         health = diagnose_and_clean(features, config)
         clean = health.x_clean

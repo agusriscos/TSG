@@ -1,0 +1,9 @@
+model,family,shapley_value,full_macro_f1
+random_forest,visibility,0.2611421141,0.9294492544
+random_forest,proximity,0.2332502991,0.9294492544
+random_forest,transition,0.2089034577,0.9294492544
+random_forest,similarity,0.2133328708,0.9294492544
+logistic,visibility,0.2550213829,0.9306084656
+logistic,proximity,0.2287278925,0.9306084656
+logistic,transition,0.1901855244,0.9306084656
+logistic,similarity,0.243853153,0.9306084656

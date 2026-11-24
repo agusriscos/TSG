@@ -1,10 +1,10 @@
 {
-  "generated_at_utc": "2026-11-24T09:26:25Z",
-  "git_commit": "101c2309c394dd6a6c381808bdfb3dfea174cebf",
+  "generated_at_utc": "2026-11-24T11:46:54Z",
+  "git_commit": "a2ef1493ca6f4ac85b89e475f264311daafc5d2a",
   "git_branch": "main",
   "counts": {
-    "figure_stems": 25,
-    "figure_files": 25,
+    "figure_stems": 26,
+    "figure_files": 26,
     "tables_csv": 35,
     "notes": 3
   },
@@ -66,6 +66,7 @@
     "b3_hard_07_critical_pairs_family_analysis",
     "b3_hard_08_difficulty_curve",
     "b3_hard_09_critical_pairs_binary_hard",
+    "b3_hard_10_pca_projection_by_group",
     "b4_inv_01_invariance_matrix",
     "b4_inv_02_invariance_matrix_by_method",
     "b5_phase_01_phase_maps_families",

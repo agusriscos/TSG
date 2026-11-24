@@ -136,6 +136,52 @@ def test_verdict_green_on_perfect_separation() -> None:
         assert isinstance(entry["feature"], str) and entry["feature"]
 
 
+def test_pca_by_dynamic_group_writes_trio(tmp_path: Path) -> None:
+    from tsg.audit.information import DYNAMIC_GROUPS
+    from tsg.audit.plotting import plot_pca_projection_by_group
+
+    regimes = tuple(r for members in DYNAMIC_GROUPS.values() for r in members)
+    cfg = AuditConfig(
+        n_realizations=3,
+        n_folds=2,
+        n_steps=80,
+        regimes=regimes,
+        critical_pairs=(("lorenz", "rossler"), ("logistic_weak", "logistic")),
+    )
+    # _fake_matrix only knows the 6 Phase-1 ids; map frontier regimes onto those bases.
+    base_for = {
+        "white_noise": "white_noise",
+        "fbm_antipersistent": "brownian",
+        "brownian": "brownian",
+        "fbm_persistent": "brownian",
+        "arma_correlated": "sine",
+        "quasiperiodic": "quasiperiodic",
+        "lorenz": "lorenz",
+        "rossler": "lorenz",
+        "henon": "logistic",
+        "logistic_weak": "logistic",
+        "logistic": "logistic",
+        "regime_switching": "quasiperiodic",
+    }
+    records = []
+    for dataset_id in cfg.regimes:
+        for r in range(cfg.n_realizations):
+            records.append(
+                {
+                    "dataset_id": dataset_id,
+                    "realization": r,
+                    "matrix": _fake_matrix(base_for[dataset_id], noise=0.08),
+                }
+            )
+    x, y = build_feature_table(records, cfg)
+    geometry = analyze_geometry(diagnose_and_clean(x, cfg).x_clean, y, cfg)
+    path = plot_pca_projection_by_group(geometry, cfg, tmp_path, lang="en")
+    assert path.name == "10_pca_projection_by_group.png"
+    stems = {p.stem for p in tmp_path.glob("10_pca_projection_by_group.*")}
+    assert stems == {"10_pca_projection_by_group"}
+    assert set(cfg.regimes) == {r for members in DYNAMIC_GROUPS.values() for r in members}
+
+
 def test_default_brownian_mode_is_levels() -> None:
     assert AuditConfig().brownian_mode == "levels"
 

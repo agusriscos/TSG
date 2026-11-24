@@ -1,0 +1,31 @@
+label,families,n_families,model,macro_f1_mean,macro_f1_std,time_ms_mean,time_ms_std,n_steps,on_pareto_front
+vis,['visibility'],1,random_forest,0.9145683021,0.0204005674,1572.891347,649.8966497,1500,True
+prox,['proximity'],1,random_forest,0.8697799423,0.02476702765,3616.484868,519.8007777,1500,False
+trans,['transition'],1,random_forest,0.8228968254,0.04689877072,12.03337325,0.5965942825,1500,True
+sim,['similarity'],1,random_forest,0.8404196729,0.02565949087,37.49163717,16.271328,1500,True
+vis+prox,"['visibility', 'proximity']",2,random_forest,0.9428354978,0.02436562571,5189.376215,812.0835674,1500,True
+vis+trans,"['visibility', 'transition']",2,random_forest,0.9207455507,0.03669475197,1584.92472,649.7923042,1500,True
+vis+sim,"['visibility', 'similarity']",2,random_forest,0.9256794132,0.02462567947,1610.382984,660.9343641,1500,True
+prox+trans,"['proximity', 'transition']",2,random_forest,0.9052380952,0.03796940104,3628.518242,519.8700044,1500,False
+prox+sim,"['proximity', 'similarity']",2,random_forest,0.8826551227,0.02624521985,3653.976505,513.0914323,1500,False
+trans+sim,"['transition', 'similarity']",2,random_forest,0.8710016835,0.0505054877,49.52501042,15.89270757,1500,True
+vis+prox+trans,"['visibility', 'proximity', 'transition']",3,random_forest,0.9298460798,0.0312299272,5201.409588,812.0441618,1500,False
+vis+prox+sim,"['visibility', 'proximity', 'similarity']",3,random_forest,0.9344360269,0.02647285289,5226.867852,816.5497609,1500,False
+vis+trans+sim,"['visibility', 'transition', 'similarity']",3,random_forest,0.9251503127,0.03497329615,1622.416357,660.822278,1500,False
+prox+trans+sim,"['proximity', 'transition', 'similarity']",3,random_forest,0.9155291005,0.03552815992,3666.009879,513.1493515,1500,False
+full,"['visibility', 'proximity', 'transition', 'similarity']",4,random_forest,0.9294492544,0.03751090508,5238.901225,816.5028956,1500,False
+vis,['visibility'],1,logistic,0.8911471861,0.04016669905,1572.891347,649.8966497,1500,True
+prox,['proximity'],1,logistic,0.8307058682,0.03170516093,3616.484868,519.8007777,1500,False
+trans,['transition'],1,logistic,0.7271007696,0.03436235602,12.03337325,0.5965942825,1500,True
+sim,['similarity'],1,logistic,0.8686952862,0.02512082276,37.49163717,16.271328,1500,True
+vis+prox,"['visibility', 'proximity']",2,logistic,0.8844143819,0.01944780491,5189.376215,812.0835674,1500,False
+vis+trans,"['visibility', 'transition']",2,logistic,0.888951419,0.0382108241,1584.92472,649.7923042,1500,False
+vis+sim,"['visibility', 'similarity']",2,logistic,0.9242195767,0.02883787189,1610.382984,660.9343641,1500,True
+prox+trans,"['proximity', 'transition']",2,logistic,0.8852477152,0.0240487763,3628.518242,519.8700044,1500,False
+prox+sim,"['proximity', 'similarity']",2,logistic,0.9046164021,0.03973751483,3653.976505,513.0914323,1500,False
+trans+sim,"['transition', 'similarity']",2,logistic,0.8625793651,0.03274455871,49.52501042,15.89270757,1500,False
+vis+prox+trans,"['visibility', 'proximity', 'transition']",3,logistic,0.9167508418,0.009184013484,5201.409588,812.0441618,1500,False
+vis+prox+sim,"['visibility', 'proximity', 'similarity']",3,logistic,0.9088407888,0.02966171684,5226.867852,816.5497609,1500,False
+vis+trans+sim,"['visibility', 'transition', 'similarity']",3,logistic,0.9155687831,0.01746610855,1622.416357,660.822278,1500,False
+prox+trans+sim,"['proximity', 'transition', 'similarity']",3,logistic,0.9087830688,0.02639587965,3666.009879,513.1493515,1500,False
+full,"['visibility', 'proximity', 'transition', 'similarity']",4,logistic,0.9306084656,0.02531365211,5238.901225,816.5028956,1500,True

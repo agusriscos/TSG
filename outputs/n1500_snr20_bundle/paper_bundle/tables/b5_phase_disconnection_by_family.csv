@@ -1,0 +1,2 @@
+N,SNR,disconnection_proxy_rate,visibility_disc_rate,transition_disc_rate,proximity_disc_rate,similarity_disc_rate,visibility_lambda2_med,transition_lambda2_med,proximity_lambda2_med,similarity_lambda2_med
+1500,20,0.9125,0,0,0.5375,0.88125,0.004796725274,12.76119343,0.002092025642,0

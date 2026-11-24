@@ -1,12 +1,12 @@
 # Paper bundle MANIFEST
 
-- Generated (UTC): `2026-11-24T09:26:25Z`
-- Git commit: `101c2309c394dd6a6c381808bdfb3dfea174cebf`
+- Generated (UTC): `2026-11-24T11:46:54Z`
+- Git commit: `a2ef1493ca6f4ac85b89e475f264311daafc5d2a`
 - Git branch: `main`
 
 ## Counts
 
-- Figures: **25** stems / **25** files
+- Figures: **26** stems / **26** files
 - Tables: **35** CSV
 - Notes: **3**
 
@@ -70,6 +70,7 @@
 - `b3_hard_07_critical_pairs_family_analysis` (.png)
 - `b3_hard_08_difficulty_curve` (.png)
 - `b3_hard_09_critical_pairs_binary_hard` (.png)
+- `b3_hard_10_pca_projection_by_group` (.png)
 - `b4_inv_01_invariance_matrix` (.png)
 - `b4_inv_02_invariance_matrix_by_method` (.png)
 - `b5_phase_01_phase_maps_families` (.png)

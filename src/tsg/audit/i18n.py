@@ -13,6 +13,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "pca_panel_b2": "B2) Top-8 loadings on PC2 ({pc2_var:.1f}% var.)",
         "pca_family_legend": "family",
         "pca_suptitle": "PCA: class geometry (A) and descriptors driving each axis (B)",
+        "pca_by_group_title": "PCA projection by dynamic group (~95% ellipses)",
+        "pca_by_group_suptitle": (
+            "Same PC axes as the per-regime PCA; colours aggregate the 12 regimes "
+            "into stochastic / chaotic-flow / discrete-map / structured groups"
+        ),
+        "pca_group_stochastic": "Stochastic",
+        "pca_group_chaotic_flows": "Chaotic flows",
+        "pca_group_discrete_maps": "Discrete maps",
+        "pca_group_structured_other": "Structured / switching",
         "confusion_suptitle": "Normalized confusion matrices (%) — family ablation (5 views)",
         "fingerprint_title": "Mean standardized regime fingerprint (z-score)",
         "ablation_title": "Family ablation",
@@ -127,6 +136,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "pca_panel_b2": "B2) Top-8 loadings en PC2 ({pc2_var:.1f}% var.)",
         "pca_family_legend": "familia",
         "pca_suptitle": "PCA: geometría de clases (A) y descriptores que empujan cada eje (B)",
+        "pca_by_group_title": "Proyección PCA por grupo dinámico (elipses ~95%)",
+        "pca_by_group_suptitle": (
+            "Mismos ejes PC que la PCA por régimen; los colores agregan los 12 "
+            "regímenes en estocásticos / flujos caóticos / mapas discretos / estructurados"
+        ),
+        "pca_group_stochastic": "Estocásticos",
+        "pca_group_chaotic_flows": "Flujos caóticos",
+        "pca_group_discrete_maps": "Mapas discretos",
+        "pca_group_structured_other": "Estructurados / conmutados",
         "confusion_suptitle": (
             "Matrices de confusión normalizadas (%) — ablación por familia (5 vistas)"
         ),

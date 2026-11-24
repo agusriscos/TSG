@@ -16,6 +16,7 @@ from tsg.audit.classification import ClassificationResult
 from tsg.audit.config import AuditConfig
 from tsg.audit.geometry import GeometryResult
 from tsg.audit.i18n import t
+from tsg.audit.information import DYNAMIC_GROUPS
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,20 @@ REGIME_COLORS = {
     "logistic_weak": "#d4a373",
     "regime_switching": "#9d755d",
 }
+
+# Same macro-partition as B1 ``DYNAMIC_GROUPS`` (exhaustive over the 12-regime panel).
+DYNAMIC_GROUP_COLORS: dict[str, str] = {
+    "stochastic": "#4c78a8",
+    "chaotic_flows": "#f28e2b",
+    "discrete_maps": "#59a14f",
+    "structured_other": "#e15759",
+}
+DYNAMIC_GROUP_ORDER: tuple[str, ...] = (
+    "stochastic",
+    "chaotic_flows",
+    "discrete_maps",
+    "structured_other",
+)
 
 
 def _save(fig: plt.Figure, path: Path, dpi: int) -> Path:
@@ -196,6 +211,75 @@ def plot_pca_projection(
     )
     fig.suptitle(t("pca_suptitle", lang), fontsize=11, y=0.98)
     return _save(fig, output_dir / "01_pca_projection.png", config.figure_dpi)
+
+
+def plot_pca_projection_by_group(
+    geometry: GeometryResult,
+    config: AuditConfig,
+    output_dir: Path,
+    *,
+    lang: str = "en",
+) -> Path:
+    """PCA scatter coloured by dynamic macro-group (stochastic / chaotic / …).
+
+    Uses the same embedding as :func:`plot_pca_projection`. Face colour and
+    ellipses follow :data:`DYNAMIC_GROUPS`.
+    """
+    emb = geometry.embedding
+    var = geometry.explained_variance_ratio
+    pc1_var = 100.0 * var[0] if len(var) > 0 else 0.0
+    pc2_var = 100.0 * var[1] if len(var) > 1 else 0.0
+    regime_to_group = {
+        regime: group for group, members in DYNAMIC_GROUPS.items() for regime in members
+    }
+
+    fig, ax = plt.subplots(figsize=(8.8, 6.4))
+    for group in DYNAMIC_GROUP_ORDER:
+        members = [r for r in config.regimes if regime_to_group.get(r) == group]
+        if not members:
+            continue
+        mask = emb["regime"].isin(members)
+        if not bool(mask.any()):
+            continue
+        color = DYNAMIC_GROUP_COLORS[group]
+        ax.scatter(
+            emb.loc[mask, "PC1"],
+            emb.loc[mask, "PC2"],
+            s=36,
+            alpha=0.80,
+            color=color,
+            edgecolors="white",
+            linewidths=0.35,
+            label=t(f"pca_group_{group}", lang),
+            zorder=3,
+        )
+        _confidence_ellipse(
+            ax,
+            emb.loc[mask, "PC1"].to_numpy(),
+            emb.loc[mask, "PC2"].to_numpy(),
+            color,
+        )
+    # Unassigned regimes (should not happen on the 12-regime panel).
+    known = set(regime_to_group)
+    other = emb.loc[~emb["regime"].isin(known)]
+    if not other.empty:
+        ax.scatter(
+            other["PC1"],
+            other["PC2"],
+            s=36,
+            alpha=0.7,
+            color="#777777",
+            label="other",
+            zorder=2,
+        )
+
+    ax.set_xlabel(f"PC1 ({pc1_var:.1f}% var.)")
+    ax.set_ylabel(f"PC2 ({pc2_var:.1f}% var.)")
+    ax.set_title(t("pca_by_group_title", lang))
+    ax.legend(fontsize=9, frameon=False, loc="best")
+    fig.suptitle(t("pca_by_group_suptitle", lang), fontsize=10, y=0.98)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
+    return _save(fig, output_dir / "10_pca_projection_by_group.png", config.figure_dpi)
 
 
 def plot_confusion_grid(
@@ -658,6 +742,7 @@ def generate_all_figures(
 ) -> list[Path]:
     paths = [
         plot_pca_projection(geometry, config, output_dir, lang=lang),
+        plot_pca_projection_by_group(geometry, config, output_dir, lang=lang),
         plot_confusion_grid(classification, config, output_dir, lang=lang),
         plot_regime_fingerprints(records, config, output_dir, lang=lang),
         plot_family_ablation(classification, geometry, config, output_dir, lang=lang),
