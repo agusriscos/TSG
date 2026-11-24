@@ -1892,13 +1892,13 @@ def _publish_bundle(report_dir: Path, bundle_dir: Path) -> list[Path]:
         dst.write_bytes(src.read_bytes())
         written.append(dst)
     for src_stem, dst_stem in _FIGURE_BUNDLE_STEMS.items():
-        for ext in ("pdf", "svg", "png"):
-            src = figures_src / f"{src_stem}.{ext}"
-            if not src.exists():
-                continue
-            dst = figures_dst / f"{dst_stem}.{ext}"
-            dst.write_bytes(src.read_bytes())
-            written.append(dst)
+        # Paper bundle tracks PNG only (PDF/SVG stay in report dirs / gitignored).
+        src = figures_src / f"{src_stem}.png"
+        if not src.exists():
+            continue
+        dst = figures_dst / f"{dst_stem}.png"
+        dst.write_bytes(src.read_bytes())
+        written.append(dst)
     return written
 
 
@@ -1910,7 +1910,7 @@ def refresh_paper_bundle_manifest(bundle_dir: Path, repo_root: Path | None = Non
     figure_files = sorted(
         p
         for p in (bundle_dir / "figures").iterdir()
-        if p.is_file() and p.suffix.lower() in {".pdf", ".svg", ".png"}
+        if p.is_file() and p.suffix.lower() == ".png"
     ) if (bundle_dir / "figures").exists() else []
     stems: dict[str, set[str]] = {}
     for path in figure_files:
@@ -1935,11 +1935,9 @@ def refresh_paper_bundle_manifest(bundle_dir: Path, repo_root: Path | None = Non
     table_lines = [
         f"- `{path.name}` ({path.stat().st_size} B, ~{_rows(path)} rows)" for path in tables
     ]
-    stem_lines = []
-    for stem in sorted(stems):
-        exts = [ext for ext in ("pdf", "png", "svg") if ext in stems[stem]]
-        shown = ", ".join(f".{ext}" for ext in exts)
-        stem_lines.append(f"- `{stem}` ({shown})")
+    stem_lines = [
+        f"- `{stem}` (.png)" for stem in sorted(stems)
+    ]
     note_lines = [f"- `{path.name}` ({path.stat().st_size} B)" for path in notes]
     markdown = "\n".join(
         [

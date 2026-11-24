@@ -1,12 +1,12 @@
 # Paper bundle MANIFEST
 
-- Generated (UTC): `2026-11-24T09:09:03Z`
-- Git commit: `5ea7de70d94038224bdab59b0b8d875ce8334995`
+- Generated (UTC): `2026-11-24T09:26:25Z`
+- Git commit: `101c2309c394dd6a6c381808bdfb3dfea174cebf`
 - Git branch: `main`
 
 ## Counts
 
-- Figures: **25** stems / **75** files
+- Figures: **25** stems / **25** files
 - Tables: **35** CSV
 - Notes: **3**
 
@@ -50,31 +50,31 @@
 
 ## Figure stems
 
-- `b1_info_01_pid_decomposition_pairs` (.pdf, .png, .svg)
-- `b1_info_02_shapley_family_importance` (.pdf, .png, .svg)
-- `b1_info_03_pareto_frontier_cost_f1` (.pdf, .png, .svg)
-- `b1_rq1_01_pid_broja_by_scope` (.pdf, .png, .svg)
-- `b1_rq1_02_omega_bootstrap_bars` (.pdf, .png, .svg)
-- `b1_rq1_03_shapley_interaction` (.pdf, .png, .svg)
-- `b1_rq1_04_pid_one_vs_rest` (.pdf, .png, .svg)
-- `b2_surr_delta_T_decomposition` (.pdf, .png, .svg)
-- `b2_surr_surrogate_binary_auroc` (.pdf, .png, .svg)
-- `b2_surr_surrogate_dhvg_irreversibility` (.pdf, .png, .svg)
-- `b2_surr_surrogate_summary` (.pdf, .png, .svg)
-- `b3_hard_01_pca_projection` (.pdf, .png, .svg)
-- `b3_hard_02_confusion_matrices_grid` (.pdf, .png, .svg)
-- `b3_hard_03_regime_fingerprints_heatmap` (.pdf, .png, .svg)
-- `b3_hard_04_family_ablation_scores` (.pdf, .png, .svg)
-- `b3_hard_05_critical_pairs_boxplots` (.pdf, .png, .svg)
-- `b3_hard_06_feature_importance_top15` (.pdf, .png, .svg)
-- `b3_hard_07_critical_pairs_family_analysis` (.pdf, .png, .svg)
-- `b3_hard_08_difficulty_curve` (.pdf, .png, .svg)
-- `b3_hard_09_critical_pairs_binary_hard` (.pdf, .png, .svg)
-- `b4_inv_01_invariance_matrix` (.pdf, .png, .svg)
-- `b4_inv_02_invariance_matrix_by_method` (.pdf, .png, .svg)
-- `b5_phase_01_phase_maps_families` (.pdf, .png, .svg)
-- `b5_phase_02_topological_vs_spectral_snr` (.pdf, .png, .svg)
-- `b5_phase_03_disconnection_by_family_phase_map` (.pdf, .png, .svg)
+- `b1_info_01_pid_decomposition_pairs` (.png)
+- `b1_info_02_shapley_family_importance` (.png)
+- `b1_info_03_pareto_frontier_cost_f1` (.png)
+- `b1_rq1_01_pid_broja_by_scope` (.png)
+- `b1_rq1_02_omega_bootstrap_bars` (.png)
+- `b1_rq1_03_shapley_interaction` (.png)
+- `b1_rq1_04_pid_one_vs_rest` (.png)
+- `b2_surr_delta_T_decomposition` (.png)
+- `b2_surr_surrogate_binary_auroc` (.png)
+- `b2_surr_surrogate_dhvg_irreversibility` (.png)
+- `b2_surr_surrogate_summary` (.png)
+- `b3_hard_01_pca_projection` (.png)
+- `b3_hard_02_confusion_matrices_grid` (.png)
+- `b3_hard_03_regime_fingerprints_heatmap` (.png)
+- `b3_hard_04_family_ablation_scores` (.png)
+- `b3_hard_05_critical_pairs_boxplots` (.png)
+- `b3_hard_06_feature_importance_top15` (.png)
+- `b3_hard_07_critical_pairs_family_analysis` (.png)
+- `b3_hard_08_difficulty_curve` (.png)
+- `b3_hard_09_critical_pairs_binary_hard` (.png)
+- `b4_inv_01_invariance_matrix` (.png)
+- `b4_inv_02_invariance_matrix_by_method` (.png)
+- `b5_phase_01_phase_maps_families` (.png)
+- `b5_phase_02_topological_vs_spectral_snr` (.png)
+- `b5_phase_03_disconnection_by_family_phase_map` (.png)
 
 ## Notes
 

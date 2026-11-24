@@ -181,12 +181,12 @@ copy_figs() {
   if [[ ! -d "${src}" ]]; then
     return 0
   fi
-  # Keep the original basename so .pdf/.svg/.png of the same figure share a stem.
+  # PNG only in the curated bundle (PDF/SVG stay in report dirs to limit repo size).
   while IFS= read -r -d '' f; do
     local base
     base="$(basename "${f}")"
     cp -f "${f}" "${BUNDLE}/figures/${prefix}_${base}"
-  done < <(find "${src}" -type f \( -name '*.pdf' -o -name '*.svg' -o -name '*.png' \) -print0 | sort -z)
+  done < <(find "${src}" -type f -name '*.png' -print0 | sort -z)
 }
 
 copy_tables() {

@@ -1,10 +1,10 @@
 {
-  "generated_at_utc": "2026-11-24T09:09:03Z",
-  "git_commit": "5ea7de70d94038224bdab59b0b8d875ce8334995",
+  "generated_at_utc": "2026-11-24T09:26:25Z",
+  "git_commit": "101c2309c394dd6a6c381808bdfb3dfea174cebf",
   "git_branch": "main",
   "counts": {
     "figure_stems": 25,
-    "figure_files": 75,
+    "figure_files": 25,
     "tables_csv": 35,
     "notes": 3
   },

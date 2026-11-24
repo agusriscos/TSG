@@ -17,6 +17,9 @@ outputs/*
 outputs/paper_bundle/nohup.log
 outputs/paper_bundle/run_log.txt
 outputs/paper_bundle/*.log
+# Keep only PNG in the tracked bundle to limit repo size.
+outputs/paper_bundle/figures/*.pdf
+outputs/paper_bundle/figures/*.svg
 *.npz
 .DS_Store
 
